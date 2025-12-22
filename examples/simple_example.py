@@ -10,7 +10,7 @@ This example shows how to:
 
 import numpy as np
 import sys
-sys.path.insert(0, '/Users/unrulyabstractions/work/xeno-dynamics')
+sys.path.insert(0, '/Users/unrulyabstractions/work/xenotropic')
 
 import xenotechnics as xeno
 

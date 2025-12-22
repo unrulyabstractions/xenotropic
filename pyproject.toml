@@ -3,7 +3,7 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "xeno-dynamics"
+name = "xenotropic"
 version = "0.1.0"
 description = "Research on xenoreproduction and dynamics of orientation"
 readme = "README.md"
@@ -68,8 +68,8 @@ dev = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/unrulyabstractions/xeno-dynamics"
-"Source" = "https://github.com/unrulyabstractions/xeno-dynamics"
+"Homepage" = "https://github.com/unrulyabstractions/xenotropic"
+"Source" = "https://github.com/unrulyabstractions/xenotropic"
 
 [tool.setuptools.packages.find]
 where = ["."]

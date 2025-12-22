@@ -1,2 +1,2 @@
-# xeno-dynamics
+# xenotropic
 Dynamics of Orientation

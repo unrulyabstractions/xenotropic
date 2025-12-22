@@ -1,0 +1,102 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xeno-dynamics"
+version = "0.1.0"
+description = "Research on xenoreproduction and dynamics of orientation"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Ian Rios-Sialer", email = "ian@unrulyabstractions.com"}
+]
+requires-python = ">=3.9"
+keywords = ["xenoreproduction", "research", "dynamics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "tqdm~=4.66.5",
+    "matplotlib~=3.8.3",
+    "numpy~=1.26.4",
+    "scipy~=1.12.0",
+    "pandas~=2.2.1",
+    "torch~=2.4.1",
+    "networkx~=3.2.1",
+    "torchvision~=0.19.1",
+    "pydantic>=2.0.0",
+    # Hugging Face ecosystem
+    "datasets",
+    "transformers",
+    "huggingface_hub",
+    "accelerate",
+    "safetensors",
+    # MLX for Apple Silicon
+    "mlx>=0.22.0",
+    "mlx-lm>=0.22.0",
+    # Ollama
+    "ollama>=0.4.0",
+    # Experiment tracking & utilities
+    "wandb",
+    "einops",
+    "jaxtyping",
+    "plotly",
+    "scikit-learn",
+    "seaborn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+    "mypy",
+    "ruff",
+    "jupyterlab",
+    "ipykernel",
+    "nbstripout",
+    "ipywidgets",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/unrulyabstractions/xeno-dynamics"
+"Source" = "https://github.com/unrulyabstractions/xeno-dynamics"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["xenotechnics*"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+extend-exclude = ["build",".venv","venv","dist"]
+
+[tool.ruff.lint]
+select = ["E","F","I","B","UP","C4","SIM","RUF"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "mypy>=1.17.1",
+    "ruff>=0.12.12",
+]

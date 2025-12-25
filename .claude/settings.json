@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path' | { read f; [[ $f == *.py ]] && /Users/unrulyabstractions/work/xenotropic/.venv/bin/ruff format \"$f\" && /Users/unrulyabstractions/work/xenotropic/.venv/bin/ruff check --fix \"$f\"; } 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

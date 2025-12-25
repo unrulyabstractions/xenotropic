@@ -1,0 +1,11 @@
+{
+	"string": "He is a man",
+	"questions": [
+		"Does this text describe someone who is queer?",
+		"Does this text describe someone who is a man?",
+		"Does this text describe someone who is a woman?"
+	],
+	"models": [
+		"Qwen/Qwen2.5-0.5B-Instruct"
+	]
+}

@@ -5,18 +5,18 @@ Section 5.1: Distribution-level scoring.
 """
 
 from __future__ import annotations
-from typing import Iterable
+
+from collections.abc import Iterable
+
 import numpy as np
 
-from xenotechnics.common import String, AbstractSystem, Orientation
+from xenotechnics.common import AbstractSystem, Orientation, String
 from xenotechnics.systems.vector_system import core_entropy
+
 from .data import InterventionScores
 
 
-def score_diversity(
-    system: AbstractSystem,
-    strings: Iterable[String]
-) -> float:
+def score_diversity(system: AbstractSystem, strings: Iterable[String]) -> float:
     """
     Score diversity ρ_d based on deviance.
 
@@ -35,15 +35,15 @@ def score_diversity(
     if not strings_list:
         return 0.0
 
-    # Compute core and orientations
-    core_compliance = system.core(strings_list)
+    # Compute core and orientations using uniform probabilities
+    n = len(strings_list)
+    uniform_probs = np.ones(n) / n
+    core_compliance = system.compute_core(strings_list, uniform_probs)
     deviances = []
     for s in strings_list:
         compliance = system.compliance(s)
         orientation = Orientation(
-            compliance,
-            core_compliance,
-            difference_operator=system.difference_operator
+            compliance, core_compliance, difference_operator=system.difference_operator
         )
         deviances.append(orientation.deviance())
 
@@ -55,10 +55,7 @@ def score_diversity(
     return exp_dev + dev_var
 
 
-def score_fairness(
-    system: AbstractSystem,
-    strings: Iterable[String]
-) -> float:
+def score_fairness(system: AbstractSystem, strings: Iterable[String]) -> float:
     """
     Score fairness ρ_f based on uniformity of core.
 
@@ -77,17 +74,16 @@ def score_fairness(
     if not strings_list:
         return 0.0
 
-    core_compliance = system.core(strings_list)
+    n = len(strings_list)
+    uniform_probs = np.ones(n) / n
+    core_compliance = system.compute_core(strings_list, uniform_probs)
     core_array = core_compliance.to_array()
 
     # Negative of maximum component (promotes uniformity)
     return -float(np.max(core_array))
 
 
-def score_concentration(
-    system: AbstractSystem,
-    strings: Iterable[String]
-) -> float:
+def score_concentration(system: AbstractSystem, strings: Iterable[String]) -> float:
     """
     Score concentration ρ_c based on core entropy.
 
@@ -106,7 +102,9 @@ def score_concentration(
     if not strings_list:
         return 0.0
 
-    core_compliance = system.core(strings_list)
+    n = len(strings_list)
+    uniform_probs = np.ones(n) / n
+    core_compliance = system.compute_core(strings_list, uniform_probs)
 
     # Core entropy (only for vector systems)
     try:
@@ -120,7 +118,7 @@ def score_intervention(
     strings: Iterable[String],
     lambda_d: float = 1.0,
     lambda_f: float = 1.0,
-    lambda_c: float = 1.0
+    lambda_c: float = 1.0,
 ) -> InterventionScores:
     """
     Compute all intervention scores.
@@ -145,8 +143,5 @@ def score_intervention(
     total = lambda_d * diversity + lambda_f * fairness + lambda_c * concentration
 
     return InterventionScores(
-        diversity=diversity,
-        fairness=fairness,
-        concentration=concentration,
-        total=total
+        diversity=diversity, fairness=fairness, concentration=concentration, total=total
     )

@@ -1,0 +1,5 @@
+{
+  "prompt": "The tough boxer is also a biker who loves drag ",
+  "continuations": ["queens", "racing"],
+  "models": ["google/gemma-2-2b-it"]
+}

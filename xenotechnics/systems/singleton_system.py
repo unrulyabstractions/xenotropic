@@ -8,16 +8,18 @@ Useful for quick prototyping and single-structure systems.
 from __future__ import annotations
 
 from typing import Callable, List
+
 import numpy as np
 
 from xenotechnics.common import (
+    AbstractDifferenceOperator,
+    AbstractScoreOperator,
     AbstractSystem,
     AbstractSystemCompliance,
-    AbstractScoreOperator,
-    AbstractDifferenceOperator,
+    FunctionalStructure,
     String,
-    FunctionalStructure
 )
+
 from .vector_system import VectorSystemCompliance, compute_core_from_trajectories
 
 
@@ -45,7 +47,7 @@ class SingletonSystem(AbstractSystem):
         score_operator: AbstractScoreOperator,
         difference_operator: AbstractDifferenceOperator,
         name: str = "singleton",
-        description: str = "Single structure system"
+        description: str = "Single structure system",
     ):
         """
         Initialize SingletonSystem.
@@ -58,12 +60,20 @@ class SingletonSystem(AbstractSystem):
             description: System description
         """
         self.structure = FunctionalStructure(
-            compliance_fn=compliance_fn,
-            name=name,
-            description=description
+            compliance_fn=compliance_fn, name=name, description=description
         )
-        self.score_operator = score_operator
-        self.difference_operator = difference_operator
+        self._score_operator = score_operator
+        self._difference_operator = difference_operator
+
+    @property
+    def score_operator(self) -> AbstractScoreOperator:
+        """Score operator for this system."""
+        return self._score_operator
+
+    @property
+    def difference_operator(self) -> AbstractDifferenceOperator:
+        """Difference operator for this system."""
+        return self._difference_operator
 
     def compliance(self, string: String) -> AbstractSystemCompliance:
         """
@@ -74,9 +84,7 @@ class SingletonSystem(AbstractSystem):
         """
         compliance_value = self.structure.compliance(string)
         return VectorSystemCompliance(
-            system=self,
-            compliance_vector=np.array([compliance_value]),
-            string=string
+            system=self, compliance_vector=np.array([compliance_value]), string=string
         )
 
     def structure_names(self) -> List[str]:

@@ -4,16 +4,16 @@ Exploration framework for trajectory collection.
 Provides clean abstractions for running LLM generations and building TreeNodes.
 """
 
-from .common import ModelWrapper, Runner, AbstractExplorer
-from .explorers import GreedyExplorer, SamplingExplorer
-from .estimators import BruteEstimator, EstimationResult
+from .common import AbstractGenerator, ModelWrapper, Runner
+from .explorers import BruteSearcher, SearchResult
+from .generators import GreedyGenerator, SamplingGenerator
 
 __all__ = [
+    "AbstractGenerator",
+    "BruteSearcher",
+    "GreedyGenerator",
     "ModelWrapper",
     "Runner",
-    "AbstractExplorer",
-    "GreedyExplorer",
-    "SamplingExplorer",
-    "BruteEstimator",
-    "EstimationResult",
+    "SamplingGenerator",
+    "SearchResult",
 ]

@@ -1,0 +1,22 @@
+{
+  "experiment_id" : "212",
+  "generation": {
+    "model": "Qwen/Qwen2.5-3B-Instruct",
+    "base_prompt": "Complete the following sentence so it's 3 words or less. Roses are",
+    "branching_points": [
+    ]
+  },
+  "estimation": {
+  	"model": "Qwen/Qwen2.5-3B-Instruct",
+    "systems": [
+    	"vector_system",
+    	"generalized_system_q1_r1",
+    	"entropic_system_q1"
+    ],
+    "structures" : [
+        "Does this text talk about queer person?",
+        "Does this text talk about women?",
+        "Does this text talk about men?"
+    ]
+  }
+}

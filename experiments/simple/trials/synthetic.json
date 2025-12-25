@@ -1,0 +1,23 @@
+{
+  "experiment_id": "synthetic_test",
+  "generation": {
+    "model": "synthetic",
+    "base_prompt": "Test prompt for synthetic data",
+    "branching_points": ["branch1", "branch2"],
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "top_k": 50,
+    "seed": 42
+  },
+  "estimation": {
+    "model": "synthetic",
+    "systems": [
+      "vector_system",
+      "entropic_system_q1"
+    ],
+    "structures": [
+      "Is this positive?",
+      "Is this negative?"
+    ]
+  }
+}

@@ -8,15 +8,17 @@ relative to a baseline distribution using information-theoretic measures.
 from __future__ import annotations
 
 from typing import List
+
 import numpy as np
 
 from xenotechnics.common import (
+    AbstractDifferenceOperator,
+    AbstractScoreOperator,
     AbstractSystem,
     AbstractSystemCompliance,
-    AbstractScoreOperator,
-    AbstractDifferenceOperator,
-    String
+    String,
 )
+
 from .vector_system import VectorSystemCompliance, compute_core_from_trajectories
 
 
@@ -37,11 +39,7 @@ class ExcessSystem(AbstractSystem):
     - Identifying over-represented structures
     """
 
-    def __init__(
-        self,
-        base_system: AbstractSystem,
-        baseline: np.ndarray = None
-    ):
+    def __init__(self, base_system: AbstractSystem, baseline: np.ndarray = None):
         """
         Initialize ExcessSystem.
 
@@ -51,8 +49,8 @@ class ExcessSystem(AbstractSystem):
         """
         self.base_system = base_system
         self.n_structures = len(base_system)
-        self.score_operator = base_system.score_operator
-        self.difference_operator = base_system.difference_operator
+        self._score_operator = base_system.score_operator
+        self._difference_operator = base_system.difference_operator
 
         if baseline is None:
             # Default: uniform baseline (no structure should dominate)
@@ -64,6 +62,16 @@ class ExcessSystem(AbstractSystem):
                     f"Baseline length {len(self.baseline)} must match "
                     f"number of structures {self.n_structures}"
                 )
+
+    @property
+    def score_operator(self) -> AbstractScoreOperator:
+        """Score operator for this system."""
+        return self._score_operator
+
+    @property
+    def difference_operator(self) -> AbstractDifferenceOperator:
+        """Difference operator for this system."""
+        return self._difference_operator
 
     def compliance(self, string: String) -> AbstractSystemCompliance:
         """
@@ -80,9 +88,7 @@ class ExcessSystem(AbstractSystem):
         excess = np.maximum(0.0, base_vector - self.baseline)
 
         return VectorSystemCompliance(
-            system=self,
-            compliance_vector=excess,
-            string=string
+            system=self, compliance_vector=excess, string=string
         )
 
     def structure_names(self) -> List[str]:
@@ -108,11 +114,7 @@ class ExcessSystem(AbstractSystem):
             raise ValueError("Baseline length must match number of structures")
         self.baseline = np.array(baseline)
 
-    def set_baseline_from_core(
-        self,
-        tree_root,
-        prompt: String
-    ):
+    def set_baseline_from_core(self, tree_root, prompt: String):
         """
         Update baseline to be the core of the base system.
 
@@ -150,11 +152,7 @@ class DeficitSystem(AbstractSystem):
     - Detecting which structures need more representation
     """
 
-    def __init__(
-        self,
-        base_system: AbstractSystem,
-        baseline: np.ndarray = None
-    ):
+    def __init__(self, base_system: AbstractSystem, baseline: np.ndarray = None):
         """
         Initialize DeficitSystem.
 
@@ -164,8 +162,8 @@ class DeficitSystem(AbstractSystem):
         """
         self.base_system = base_system
         self.n_structures = len(base_system)
-        self.score_operator = base_system.score_operator
-        self.difference_operator = base_system.difference_operator
+        self._score_operator = base_system.score_operator
+        self._difference_operator = base_system.difference_operator
 
         if baseline is None:
             # Default: uniform baseline (all structures should be represented equally)
@@ -177,6 +175,16 @@ class DeficitSystem(AbstractSystem):
                     f"Baseline length {len(self.baseline)} must match "
                     f"number of structures {self.n_structures}"
                 )
+
+    @property
+    def score_operator(self) -> AbstractScoreOperator:
+        """Score operator for this system."""
+        return self._score_operator
+
+    @property
+    def difference_operator(self) -> AbstractDifferenceOperator:
+        """Difference operator for this system."""
+        return self._difference_operator
 
     def compliance(self, string: String) -> AbstractSystemCompliance:
         """
@@ -193,9 +201,7 @@ class DeficitSystem(AbstractSystem):
         deficit = np.maximum(0.0, self.baseline - base_vector)
 
         return VectorSystemCompliance(
-            system=self,
-            compliance_vector=deficit,
-            string=string
+            system=self, compliance_vector=deficit, string=string
         )
 
     def structure_names(self) -> List[str]:
@@ -221,11 +227,7 @@ class DeficitSystem(AbstractSystem):
             raise ValueError("Baseline length must match number of structures")
         self.baseline = np.array(baseline)
 
-    def set_baseline_from_core(
-        self,
-        tree_root,
-        prompt: String
-    ):
+    def set_baseline_from_core(self, tree_root, prompt: String):
         """
         Update baseline to be the core of the base system.
 

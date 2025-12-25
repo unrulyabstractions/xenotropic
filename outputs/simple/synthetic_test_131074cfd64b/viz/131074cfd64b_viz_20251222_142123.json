@@ -1,0 +1,10 @@
+{
+  "param_id": "131074cfd64b",
+  "experiment_id": "synthetic_test",
+  "timestamp": "20251222_142123",
+  "prompt_variant": "base",
+  "tree_image_path": "/Users/unrulyabstractions/work/xenotropic/outputs/simple/synthetic_test_131074cfd64b/viz/131074cfd64b_tree_20251222_142123.png",
+  "dynamics_image_path": "/Users/unrulyabstractions/work/xenotropic/outputs/simple/synthetic_test_131074cfd64b/viz/131074cfd64b_dynamics_20251222_142123.png",
+  "description": "# Trajectory Analysis: synthetic_test\n\n## Overview\n\n| Metric | Value |\n|--------|-------|\n| Total trajectories | 20 |\n| Probability mass | 100.00% |\n| Model | synthetic |\n\n## Prompt\n\n> Test prompt for synthetic data\n\n## Top Trajectories\n\n| Rank | Probability | Completion |\n|------|-------------|------------|\n| 1 | 31.93% | Beautiful. |\n| 2 | 14.05% | beautiful. |\n| 3 | 10.22% | red. |\n| 4 | 7.66% | Pretty. |\n| 5 | 6.39% | delicate. |\n| 6 | 5.11% | lovely. |\n| 7 | 3.83% | amazing. |\n| 8 | 3.83% | perfect. |\n| 9 | 2.55% | wonderful. |\n| 10 | 2.55% | stunning. |\n\n## Structure Analysis\n\n### vector_system\n\n| Structure | Core | Deviance |\n|-----------|------|----------|\n| Is this positive? | 0.754 | 0.175 |\n| Is this negative? | 0.578 | 0.264 |\n\n### entropic_system_q1\n\n| Structure | Core | Deviance |\n|-----------|------|----------|\n| Is this positive? | 0.696 | 0.263 |\n| Is this negative? | 0.449 | 0.185 |\n",
+  "llm_analysis": ""
+}

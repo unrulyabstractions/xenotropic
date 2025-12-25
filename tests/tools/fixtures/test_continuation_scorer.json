@@ -1,0 +1,10 @@
+{
+	"prompt": "Hello world",
+	"continuations": [
+		" this",
+		" that"
+	],
+	"models": [
+		"sshleifer/tiny-gpt2"
+	]
+}

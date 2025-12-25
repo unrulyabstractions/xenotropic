@@ -5,11 +5,9 @@ Uses a language model to evaluate strings against a question.
 """
 
 from __future__ import annotations
-from typing import Optional, Any
-import re
 
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import re
+from typing import Optional
 
 from ..common import AbstractStructure, String
 
@@ -19,74 +17,68 @@ class JudgeStructure(AbstractStructure):
     Structure that uses an LLM to judge string compliance.
 
     Given a question, prompts an LLM to score the string from 0 to 1.
+    Uses GreedyGenerator or CloudGreedyGenerator internally.
     """
+
+    PROMPT_TEMPLATE = """You are a precise evaluator. Answer the following question about the given text with ONLY a single number between 0 and 1, where 0 means "not at all" and 1 means "completely/definitely". Do not include any other text, explanation, or punctuation - just the number.
+
+Text: "{text}"
+
+Question: {question}
+
+Your numeric answer (0-1):"""
 
     def __init__(
         self,
         question: str,
-        model: Optional[Any] = None,
-        model_name: Optional[str] = None,
+        model_name: str,
         device: Optional[str] = None,
-        dtype: Optional[torch.dtype] = None,
+        use_cloud: bool = False,
+        use_chat_template: bool = True,
+        isolate: bool = False,
     ):
         """
         Initialize judge structure.
 
         Args:
             question: Question to ask the LLM about the string
-            model: Pre-loaded model wrapper (optional)
-            model_name: Model name to load (required if model not provided)
+            model_name: Model name to load
             device: Device to use (auto-detected if None)
-            dtype: Data type (auto-detected if None)
+            use_cloud: If True, use CloudGreedyGenerator for HuggingFace Inference API
+            use_chat_template: Whether to use chat template for prompts
+            isolate: If True, run generation in subprocess for memory isolation
         """
         super().__init__(
             name=f"Judge: {question[:50]}...",
-            description=f"LLM judge evaluating: {question}"
+            description=f"LLM judge evaluating: {question}",
         )
 
         self.question = question
-
-        if model is not None:
-            self.model = model
-            self.tokenizer = model.tokenizer
-            self.device = model.device
-        elif model_name is not None:
-            self._init_model(model_name, device, dtype)
-        else:
-            raise ValueError("Must provide either model or model_name")
-
-    def _init_model(
-        self,
-        model_name: str,
-        device: Optional[str],
-        dtype: Optional[torch.dtype]
-    ) -> None:
-        """Initialize model and tokenizer."""
-        # Auto-detect device
-        if device is None:
-            if torch.backends.mps.is_available():
-                device = "mps"
-            elif torch.cuda.is_available():
-                device = "cuda"
-            else:
-                device = "cpu"
+        self.model_name = model_name
         self.device = device
+        self.use_cloud = use_cloud
+        self.use_chat_template = use_chat_template
+        self.isolate = isolate
+        self._generator = None
 
-        # Auto-detect dtype
-        if dtype is None:
-            if device in ["mps", "cuda"]:
-                dtype = torch.float16
+    @property
+    def generator(self):
+        """Lazy-load generator."""
+        if self._generator is None:
+            if self.use_cloud:
+                from exploration.generators import CloudGreedyGenerator
+
+                self._generator = CloudGreedyGenerator(self.model_name)
             else:
-                dtype = torch.float32
+                from exploration.generators import GreedyGenerator
 
-        # Load model
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            dtype=dtype,
-            device_map=device,
-        )
-        self.model.eval()
+                self._generator = GreedyGenerator(
+                    model_name=self.model_name,
+                    device=self.device,
+                    use_chat_template=self.use_chat_template,
+                    lazy_load=self.isolate,
+                )
+        return self._generator
 
     def compliance(self, string: String) -> float:
         """
@@ -98,88 +90,94 @@ class JudgeStructure(AbstractStructure):
         Returns:
             Compliance score in [0, 1]
         """
-        # Get text from string
         text = string.to_text()
-
-        # Create prompt
         prompt = self._format_prompt(text)
 
-        # Get LLM response
-        score = self._query_model(prompt)
+        if self.use_cloud:
+            response = self._query_cloud(prompt)
+        else:
+            response = self._query_local(prompt)
 
-        return score
+        return self._parse_score(response)
 
-    def _format_prompt(self, text: str) -> str:
+    def judge(self, text: str) -> tuple[float, str]:
         """
-        Format prompt for LLM judge.
+        Judge a text string directly.
+
+        Convenience method that accepts text instead of String object.
 
         Args:
             text: Text to evaluate
 
         Returns:
-            Formatted prompt
+            Tuple of (score, raw_response)
         """
-        prompt = f"""Evaluate the following text based on this question:
+        prompt = self._format_prompt(text)
 
-Question: {self.question}
-
-Text: {text}
-
-Provide a score from 0.0 to 1.0, where:
-- 0.0 means the text completely fails the criterion
-- 1.0 means the text perfectly satisfies the criterion
-
-Respond with ONLY a number between 0.0 and 1.0, nothing else.
-
-Score:"""
-
-        return prompt
-
-    def _query_model(self, prompt: str) -> float:
-        """
-        Query the model and parse score.
-
-        Args:
-            prompt: Formatted prompt
-
-        Returns:
-            Parsed score in [0, 1]
-        """
-        # Tokenize
-        if hasattr(self, 'tokenizer') and self.tokenizer.chat_template is not None:
-            input_ids = self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": prompt}],
-                tokenize=True,
-                add_generation_prompt=True,
-                return_tensors="pt",
-            )
+        if self.use_cloud:
+            response = self._query_cloud(prompt)
         else:
-            input_ids = self.tokenizer.encode(
-                prompt,
-                return_tensors="pt",
-            )
+            response = self._query_local(prompt)
 
-        input_ids = input_ids.to(self.device)
+        score = self._parse_score(response)
+        return score, response
 
-        # Generate
-        with torch.no_grad():
-            output_ids = self.model.generate(
-                input_ids,
-                max_new_tokens=10,
-                do_sample=False,
-                pad_token_id=self.tokenizer.eos_token_id,
-            )
+    def _format_prompt(self, text: str) -> str:
+        """Format prompt for LLM judge."""
+        return self.PROMPT_TEMPLATE.format(question=self.question, text=text)
 
-        # Decode response (only new tokens)
-        response = self.tokenizer.decode(
-            output_ids[0][input_ids.shape[1]:],
-            skip_special_tokens=True
+    def _query_local(self, prompt: str) -> str:
+        """Query using local GreedyGenerator."""
+        prompt_string = String.from_text(prompt)
+
+        tree = self.generator.run(
+            prompt=prompt_string,
+            max_new_tokens=20,
+            verbose=False,
+            isolate=self.isolate,
         )
 
-        # Parse score
-        score = self._parse_score(response)
+        # Get trajectory text (continuation only)
+        trajectories = tree.get_trajectory_nodes()
+        if trajectories:
+            traj = trajectories[0]
+            full_text = traj.string.to_text()
 
-        return score
+            # Extract assistant response from chat template if present
+            # Look for common chat template patterns
+            if "<|im_start|>assistant" in full_text:
+                # Qwen/ChatML style: <|im_start|>assistant\n...<|im_end|>
+                match = re.search(
+                    r"<\|im_start\|>assistant\n?(.*?)(?:<\|im_end\|>|$)",
+                    full_text,
+                    re.DOTALL,
+                )
+                response = match.group(1).strip() if match else ""
+            elif "[/INST]" in full_text:
+                # Llama style: [/INST] ...
+                match = re.search(r"\[/INST\]\s*(.*?)(?:</s>|$)", full_text, re.DOTALL)
+                response = match.group(1).strip() if match else ""
+            elif "<|assistant|>" in full_text:
+                # Phi style: <|assistant|>...
+                match = re.search(
+                    r"<\|assistant\|>\s*(.*?)(?:<\|end\|>|$)", full_text, re.DOTALL
+                )
+                response = match.group(1).strip() if match else ""
+            else:
+                # Fallback: extract continuation after prompt
+                response = full_text[len(prompt) :].strip()
+        else:
+            response = ""
+
+        return response
+
+    def _query_cloud(self, prompt: str) -> str:
+        """Query using CloudGreedyGenerator."""
+        try:
+            result = self.generator.generate(prompt, max_new_tokens=20, verbose=False)
+            return result.text.strip()
+        except Exception as e:
+            return f"[Error: {e}]"
 
     def _parse_score(self, response: str) -> float:
         """
@@ -191,17 +189,43 @@ Score:"""
         Returns:
             Parsed score in [0, 1], defaults to 0.5 if unparseable
         """
-        # Try to find a decimal number
-        match = re.search(r'(\d+\.?\d*)', response.strip())
+        response = response.strip()
 
+        # Strategy 1: Direct parsing
+        try:
+            score = float(response)
+            if 0 <= score <= 1:
+                return score
+            if 1 < score <= 100:
+                return score / 100
+            return max(0.0, min(1.0, score))
+        except ValueError:
+            pass
+
+        # Strategy 2: Find first decimal number in response
+        match = re.search(r"(\d+\.?\d*)", response)
         if match:
             try:
                 score = float(match.group(1))
-                # Clamp to [0, 1]
-                score = max(0.0, min(1.0, score))
-                return score
+                if 0 <= score <= 1:
+                    return score
+                if 1 < score <= 100:
+                    return score / 100
+                return max(0.0, min(1.0, score))
             except ValueError:
                 pass
+
+        # Strategy 3: Common text patterns
+        response_lower = response.lower()
+        if any(w in response_lower for w in ["no", "not", "zero", "none"]):
+            return 0.0
+        if any(
+            w in response_lower
+            for w in ["yes", "completely", "definitely", "one", "full"]
+        ):
+            return 1.0
+        if "half" in response_lower or "middle" in response_lower:
+            return 0.5
 
         # Default to 0.5 if unparseable
         return 0.5

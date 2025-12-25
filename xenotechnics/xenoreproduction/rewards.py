@@ -5,10 +5,12 @@ Section 5.3: Trajectory-level formulation.
 """
 
 from __future__ import annotations
-from typing import List, Optional
+
+from typing import List
+
 import numpy as np
 
-from xenotechnics.common import String, AbstractSystem
+from xenotechnics.common import AbstractSystem, String
 from xenotechnics.systems.vector_system import VectorOrientation
 
 
@@ -18,7 +20,7 @@ def trajectory_reward(
     reference_strings: List[String],
     lambda_d: float = 1.0,
     lambda_f: float = 1.0,
-    lambda_c: float = 1.0
+    lambda_c: float = 1.0,
 ) -> float:
     """
     Compute reward for a trajectory in xeno-reproduction.
@@ -42,8 +44,10 @@ def trajectory_reward(
     Returns:
         Scalar reward (higher is better)
     """
-    # Compute core from reference distribution
-    core_compliance = system.core(reference_strings)
+    # Compute core from reference distribution using uniform probabilities
+    n = len(reference_strings)
+    uniform_probs = np.ones(n) / n
+    core_compliance = system.compute_core(reference_strings, uniform_probs)
 
     # Compute trajectory compliance
     trajectory_compliance = system.compliance(trajectory)
@@ -52,7 +56,7 @@ def trajectory_reward(
     orientation = VectorOrientation(
         trajectory_compliance,
         core_compliance,
-        difference_operator=system.difference_operator
+        difference_operator=system.difference_operator,
     )
     diversity = orientation.deviance()
 
@@ -63,7 +67,9 @@ def trajectory_reward(
     # Concentration: entropy of trajectory compliance
     trajectory_normalized = trajectory_array / (trajectory_array.sum() + 1e-10)
     trajectory_normalized = np.clip(trajectory_normalized, 1e-10, 1.0)
-    concentration = float(-np.sum(trajectory_normalized * np.log(trajectory_normalized)))
+    concentration = float(
+        -np.sum(trajectory_normalized * np.log(trajectory_normalized))
+    )
 
     # Combine components
     reward = lambda_d * diversity + lambda_f * fairness + lambda_c * concentration

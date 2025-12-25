@@ -9,21 +9,23 @@ This module contains the fundamental abstractions of the framework:
 - Orientation representations
 """
 
-from .string import String
-from .structure import AbstractStructure, FunctionalStructure, CompositeStructure
-from .system import AbstractSystem
-from .operator import AbstractScoreOperator, AbstractDifferenceOperator
 from .compliance import AbstractSystemCompliance
+from .operator import AbstractDifferenceOperator, AbstractScoreOperator
 from .orientation import Orientation
+from .schema_utils import SchemaClass
+from .string import String
+from .structure import AbstractStructure, CompositeStructure, FunctionalStructure
+from .system import AbstractSystem
 
 __all__ = [
-    "String",
-    "AbstractStructure",
-    "FunctionalStructure",
-    "CompositeStructure",
-    "AbstractSystem",
-    "AbstractScoreOperator",
     "AbstractDifferenceOperator",
+    "AbstractScoreOperator",
+    "AbstractStructure",
+    "AbstractSystem",
     "AbstractSystemCompliance",
+    "CompositeStructure",
+    "FunctionalStructure",
     "Orientation",
+    "SchemaClass",
+    "String",
 ]

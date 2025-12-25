@@ -188,9 +188,7 @@ class TreeNode:
             return self.children[token]
 
         # Create new child
-        new_string = self.string.extend_with_token_id(
-            token, sampled_token_id, tokenizer
-        )
+        new_string = self.string.extend_with_token_id(token, sampled_token_id)
         child = TreeNode(
             string=new_string, parent=self, metadata={"token_id": sampled_token_id}
         )
@@ -249,21 +247,23 @@ class TreeNode:
         Set child_logprobs from a full distribution.
 
         Converts probability distribution over vocabulary to log probabilities
-        and stores them in child_logprobs dict.
+        and stores them in child_logprobs dict. Does NOT overwrite existing
+        logprobs to preserve values from previous sampling runs.
 
         Args:
             distribution: Probability distribution over vocabulary
             tokenizer: Tokenizer for decoding token IDs
             min_logprob: Minimum log probability to store (for efficiency)
         """
-        self.child_logprobs.clear()
-
+        # Don't clear - preserve existing logprobs from previous runs
         for token_id, prob in enumerate(distribution):
             if prob > 0:
                 logprob = float(np.log(prob))
                 if logprob >= min_logprob:
                     token_str = tokenizer.decode([token_id])
-                    self.child_logprobs[token_str] = logprob
+                    # Only set if not already present
+                    if token_str not in self.child_logprobs:
+                        self.child_logprobs[token_str] = logprob
 
     def get_child(self, token: str) -> Optional[TreeNode]:
         """Get child node for a given token."""
@@ -506,7 +506,7 @@ class TreeNode:
         if len(path_logprobs) > prompt_token_count:
             return sum(path_logprobs[prompt_token_count:])
         else:
-            return 0.0  # Trajectory is just the prompt
+            return 0.0  # Trajectory is just the prompt, P=1.0, logP=0.0
 
     def get_continuation_prob(self, prompt_token_count: int) -> float:
         """

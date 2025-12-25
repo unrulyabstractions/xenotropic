@@ -1,13 +1,10 @@
 """
-Concrete exploration strategies.
-
-Different search strategies that inherit from AbstractExplorer.
+Searchers for trajectory exploration.
 """
 
-from .greedy import GreedyExplorer
-from .sampling import SamplingExplorer
+from .brute_searcher import BruteSearcher, SearchResult
 
 __all__ = [
-    "GreedyExplorer",
-    "SamplingExplorer",
+    "BruteSearcher",
+    "SearchResult",
 ]

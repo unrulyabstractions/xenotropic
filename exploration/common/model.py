@@ -5,6 +5,7 @@ Handles model loading and inference.
 """
 
 from __future__ import annotations
+
 from typing import Optional, Tuple
 
 import torch
@@ -23,7 +24,7 @@ class ModelWrapper:
         self,
         model_name: str,
         device: Optional[str] = None,
-        dtype: Optional[torch.dtype] = None
+        dtype: Optional[torch.dtype] = None,
     ):
         """
         Initialize model wrapper.
@@ -64,7 +65,9 @@ class ModelWrapper:
         self.model.eval()
         print(f"✅ Model loaded: {model_name}\n")
 
-    def tokenize_prompt(self, prompt: str, use_chat_template: bool = True) -> torch.Tensor:
+    def tokenize_prompt(
+        self, prompt: str, use_chat_template: bool = True
+    ) -> torch.Tensor:
         """
         Tokenize prompt.
 
@@ -91,9 +94,7 @@ class ModelWrapper:
         return input_ids.to(self.device)
 
     def get_next_token_logits(
-        self,
-        input_ids: torch.Tensor,
-        past_key_values: Optional[Tuple] = None
+        self, input_ids: torch.Tensor, past_key_values: Optional[Tuple] = None
     ) -> Tuple[torch.Tensor, Tuple]:
         """
         Get logits for next token with KV caching.
@@ -122,7 +123,9 @@ class ModelWrapper:
 
         return logits, past_key_values
 
-    def decode_tokens(self, token_ids: torch.Tensor, skip_special_tokens: bool = False) -> str:
+    def decode_tokens(
+        self, token_ids: torch.Tensor, skip_special_tokens: bool = False
+    ) -> str:
         """
         Decode token IDs to text.
 

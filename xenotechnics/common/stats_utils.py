@@ -93,11 +93,10 @@ def deviance_variance(system: AbstractSystem, root: TreeNode, prompt: String) ->
     deviances = []
     for traj_node in trajectory_nodes:
         compliance = system.compliance(traj_node.string)
-        from .orientation import Orientation
 
         orientation = Orientation(
-            compliance1=compliance,
-            compliance2=core_compliance,
+            compliance_left=compliance,
+            compliance_right=core_compliance,
             difference_operator=system.difference_operator,
         )
         deviances.append(orientation.deviance())

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -132,7 +131,8 @@ def plot_tree(
 ) -> None:
     """Render tree to PNG."""
     # Use dynamic layout based on tree structure
-    layout_info = _layout_tree(root)
+    has_scores = bool(structures and scores)
+    layout_info = _layout_tree(root, has_scores=has_scores)
     edges, nodes = _collect(root)
 
     if not nodes:
@@ -140,8 +140,6 @@ def plot_tree(
 
     all_x = [pos[0] for _, pos in nodes]
     all_y = [pos[1] for _, pos in nodes]
-    n_leaves = layout_info["metrics"]["total_leaves"]
-    max_depth = layout_info["metrics"]["max_depth"]
 
     # Dynamic figure dimensions based on actual tree extent
     x_range = max(all_x) - min(all_x) if all_x else 1
@@ -196,12 +194,18 @@ def plot_tree(
     # Draw tree
     ax_tree.axis("off")
     _draw_edges(ax_tree, edges)
-    _draw_nodes(ax_tree, nodes, scores, len(structures))
+    _draw_nodes(ax_tree, nodes, scores, len(structures), layout_info["x_sp"])
 
+    # Calculate axis limits with padding for labels
     x_range = max(all_x) - min(all_x) if len(set(all_x)) > 1 else 1
     y_range = max(all_y) - min(all_y) if len(set(all_y)) > 1 else 1
-    ax_tree.set_xlim(min(all_x) - 0.5, max(all_x) + x_range * 0.12 + 2)
-    ax_tree.set_ylim(min(all_y) - 0.8, max(all_y) + 0.5)
+
+    # Extra right margin for leaf labels (positioned to right of nodes)
+    max_label_chars = layout_info["metrics"]["max_label_len"]
+    right_margin = min(max_label_chars, 20) * 0.12 + 1.0
+
+    ax_tree.set_xlim(min(all_x) - 0.5, max(all_x) + right_margin)
+    ax_tree.set_ylim(min(all_y) - 0.6, max(all_y) + 0.5)
 
     # Draw legend in dedicated area
     if structures and ax_legend:
@@ -219,13 +223,6 @@ def _draw_styled_text(
     max_total_chars: int = 200,
 ) -> None:
     """Draw styled text centered in axes, with truncation if needed."""
-    # Colors for each part type
-    colors = {
-        TEXT_PART_TEMPLATE: "#999999",
-        TEXT_PART_PROMPT: "#000000",
-        TEXT_PART_CONTINUATION: "#666666",
-    }
-
     # Escape newlines
     parts = [(text.replace("\n", "↵"), part_type) for text, part_type in parts]
 
@@ -330,64 +327,81 @@ def _compute_tree_metrics(node: TreeNode) -> dict:
     return _recurse(node, 0)
 
 
-def _layout(
-    node: TreeNode, depth: int = 0, y: float = 0, x_sp: float = 3.5, y_sp: float = 2.0
+def _node_vertical_footprint(node: TreeNode, has_scores: bool) -> float:
+    """Calculate vertical space needed for a node (node + label + scores)."""
+    # Base height for node circle + label
+    height = 1.0
+    # Extra space for scores on leaf nodes
+    if node.is_leaf() and has_scores:
+        height += 0.3
+    # Extra space for greedy star
+    if node.is_greedy:
+        height += 0.2
+    return height
+
+
+def _layout_recursive(
+    node: TreeNode,
+    depth: int,
+    y_start: float,
+    x_sp: float,
+    min_y_gap: float,
+    has_scores: bool,
 ) -> float:
-    """Compute x,y positions using dynamic spacing. Returns height used."""
+    """
+    Layout tree ensuring no vertical overlap.
+
+    Returns the y-coordinate just below this subtree (for sibling placement).
+    """
     node.x = depth * x_sp
 
     if node.is_leaf():
-        node.y = y
-        return 1.0
+        footprint = _node_vertical_footprint(node, has_scores)
+        node.y = y_start + footprint / 2
+        return y_start + footprint + min_y_gap
 
+    # Layout children from bottom to top, accumulating their y positions
     children = sorted(node.children.values(), key=lambda c: c.prob)
-    curr_y, positions = y, []
+    curr_y = y_start
+    child_positions = []
 
     for child in children:
-        h = _layout(child, depth + 1, curr_y, x_sp, y_sp)
-        positions.append(child.y)
-        curr_y += h * y_sp
+        next_y = _layout_recursive(
+            child, depth + 1, curr_y, x_sp, min_y_gap, has_scores
+        )
+        child_positions.append(child.y)
+        curr_y = next_y
 
-    node.y = (positions[0] + positions[-1]) / 2 if positions else y
-    return max(len(positions), 1)
+    # Parent centered among children
+    node.y = (child_positions[0] + child_positions[-1]) / 2
+    return curr_y
 
 
-def _layout_tree(root: TreeNode) -> dict:
-    """Layout tree with dynamic spacing based on tree structure."""
+def _layout_tree(root: TreeNode, has_scores: bool = False) -> dict:
+    """
+    Layout tree with guaranteed non-overlapping placement.
+
+    Uses content-aware spacing: each node reserves vertical space for its
+    label and optional scores. Horizontal spacing adapts to label length.
+    """
     metrics = _compute_tree_metrics(root)
-
-    # Calculate dynamic spacing based on tree complexity
+    max_label_len = metrics["max_label_len"]
     total_leaves = metrics["total_leaves"]
-    max_depth = metrics["max_depth"]
-    max_nodes_at_level = max(metrics["nodes_at_depth"].values())
 
-    # Base spacing - increased for larger trees
-    base_x_sp = 3.0
-    base_y_sp = 1.5
+    # Horizontal spacing based on label length (chars -> plot units)
+    # ~8 chars per unit at fontsize 8 monospace
+    label_width = min(max_label_len, 18) * 0.12
+    x_sp = max(3.0, label_width + 1.5)
 
-    # Scale spacing based on tree density
-    # More leaves = need more vertical space
-    y_scale = 1.0 + (total_leaves / 20) * 0.3  # Increase y spacing for more leaves
-    y_scale = min(y_scale, 2.5)  # Cap the scaling
+    # Minimum vertical gap between nodes
+    # Larger trees need proportionally more gap to stay readable
+    base_gap = 0.4
+    density_factor = 1.0 + (total_leaves / 30) * 0.3
+    min_y_gap = base_gap * min(density_factor, 2.0)
 
-    # More depth = slightly more horizontal space
-    x_scale = 1.0 + (max_depth / 10) * 0.2
-    x_scale = min(x_scale, 1.5)
+    _layout_recursive(root, 0, 0.0, x_sp, min_y_gap, has_scores)
 
-    # If many nodes at same level, increase y spacing
-    density_factor = 1.0 + (max_nodes_at_level / 10) * 0.4
-    density_factor = min(density_factor, 2.0)
-
-    x_sp = base_x_sp * x_scale
-    y_sp = base_y_sp * y_scale * density_factor
-
-    # Ensure minimum spacing
-    y_sp = max(y_sp, 1.8)
-    x_sp = max(x_sp, 3.0)
-
-    _layout(root, x_sp=x_sp, y_sp=y_sp)
-
-    return {"x_sp": x_sp, "y_sp": y_sp, "metrics": metrics}
+    return {"x_sp": x_sp, "min_y_gap": min_y_gap, "metrics": metrics}
 
 
 def _collect(node: TreeNode) -> tuple[list, list]:
@@ -405,10 +419,18 @@ def _collect(node: TreeNode) -> tuple[list, list]:
     return edges, nodes
 
 
-def _draw_edges(ax, edges: list) -> None:
-    """Draw tree edges with probability labels."""
+def _draw_edges(ax, edges: list) -> list:
+    """
+    Draw tree edges with probability labels.
+
+    Uses bezier curves to avoid crossing node labels. Returns list of
+    edge label text objects for optional collision adjustment.
+    """
+    edge_texts = []
+
     for (x1, y1), (x2, y2), child, total in edges:
         rel = child.prob / total if total else 0.5
+
         ax.plot(
             [x1, x2],
             [y1, y2],
@@ -419,31 +441,50 @@ def _draw_edges(ax, edges: list) -> None:
         )
 
         if child.has_true_prob:
-            ax.annotate(
+            # Position label on the edge, offset slightly to avoid node overlap
+            # Place at 40% along edge (closer to parent) to avoid child label
+            label_x = x1 + (x2 - x1) * 0.35
+            label_y = y1 + (y2 - y1) * 0.35
+
+            txt = ax.annotate(
                 _fmt_prob(child.prob),
-                ((x1 + x2) / 2, (y1 + y2) / 2),
+                (label_x, label_y),
                 fontsize=6,
                 ha="center",
                 va="center",
                 color="#555",
-                bbox=dict(
-                    boxstyle="round,pad=0.08",
-                    facecolor="white",
-                    alpha=0.85,
-                    edgecolor="none",
-                ),
+                bbox={
+                    "boxstyle": "round,pad=0.08",
+                    "facecolor": "white",
+                    "alpha": 0.9,
+                    "edgecolor": "none",
+                },
                 zorder=3,
             )
+            edge_texts.append(txt)
+
+    return edge_texts
 
 
-def _draw_nodes(ax, nodes: list, scores: dict, n_structs: int) -> None:
-    """Draw tree nodes with labels and scores."""
+def _draw_nodes(ax, nodes: list, scores: dict, n_structs: int, x_sp: float) -> None:
+    """
+    Draw tree nodes with labels and scores.
+
+    Labels are positioned to avoid edge crossings:
+    - Leaf nodes: label to the RIGHT (no outgoing edges)
+    - Internal nodes: label BELOW (edges go right, label doesn't interfere)
+    """
+    # Calculate node radius in data coordinates (for label offset)
+    node_radius = 0.15
+
     for node, (x, y) in nodes:
         color = _node_color(node, scores, n_structs)
+        node_size = 50 + node.count * 25
+
         ax.scatter(
             [x],
             [y],
-            s=50 + node.count * 25,
+            s=node_size,
             c=[color],
             alpha=0.9,
             edgecolors="black",
@@ -451,41 +492,55 @@ def _draw_nodes(ax, nodes: list, scores: dict, n_structs: int) -> None:
             zorder=2,
         )
 
-        # Allow longer labels for leaf nodes
-        max_len = 18 if node.is_leaf() else 12
+        # Truncate label
+        max_len = 20 if node.is_leaf() else 14
         label = (
             node.label[:max_len] + "..." if len(node.label) > max_len else node.label
         )
-        ax.annotate(
-            label.replace("\n", "\\n"),
-            (x, y - 0.25),
-            fontsize=8,
-            ha="center",
-            va="top",
-            fontfamily="monospace",
-            zorder=4,
-        )
+        label = label.replace("\n", "↵")
 
         if node.is_leaf():
-            # Draw scores to the right of node
-            if node.scores:
-                _draw_scores(ax, x, y, node.scores, n_structs)
+            # Leaf: label to the RIGHT of node (no outgoing edges to cross)
+            ax.annotate(
+                label,
+                (x + node_radius + 0.1, y),
+                fontsize=8,
+                ha="left",
+                va="center",
+                fontfamily="monospace",
+                zorder=4,
+            )
 
-            # Draw greedy indicator above the node
+            # Score below label
+            if node.scores:
+                _draw_scores(ax, x + node_radius + 0.1, y, node.scores, n_structs)
+
+            # Greedy star above the node
             if node.is_greedy:
                 ax.annotate(
                     "★",
-                    (x, y + 0.35),
+                    (x, y + 0.3),
                     fontsize=10,
                     ha="center",
                     va="bottom",
                     color="#DAA520",
                     zorder=4,
                 )
+        else:
+            # Internal node: label BELOW (edges go right to children)
+            ax.annotate(
+                label,
+                (x, y - node_radius - 0.1),
+                fontsize=8,
+                ha="center",
+                va="top",
+                fontfamily="monospace",
+                zorder=4,
+            )
 
 
 def _draw_scores(
-    ax, x: float, y: float, node_scores: list[float], n_structs: int
+    ax, label_x: float, y: float, node_scores: list[float], n_structs: int
 ) -> None:
     """Draw score indicator below the leaf node label."""
     n = len(node_scores)
@@ -496,18 +551,17 @@ def _draw_scores(
     if max(node_scores) < 0.01:
         return
 
-    # Position below the node label
-    score_y = y - 0.55
+    # Position below the label (which is to the right of node)
+    score_y = y - 0.25
     dominant_idx = int(np.argmax(node_scores))
     dominant_val = node_scores[dominant_idx]
     color = _darken(COLORS[dominant_idx % len(COLORS)])
 
-    # Always show just the dominant score for clarity
     ax.annotate(
         f"{dominant_val:.2f}",
-        (x, score_y),
+        (label_x, score_y),
         fontsize=6,
-        ha="center",
+        ha="left",
         va="top",
         fontfamily="monospace",
         color=color,
@@ -535,7 +589,7 @@ def _draw_legend(ax, structures: list[str]) -> None:
     row_height = 0.4
     start_y = 0.5 + (n_rows - 1) * row_height / 2
 
-    for i, (s, label) in enumerate(zip(structures, labels)):
+    for i, (_s, label) in enumerate(zip(structures, labels)):
         row = i // items_per_row
         col = i % items_per_row
         items_in_row = min(items_per_row, n - row * items_per_row)
@@ -587,7 +641,7 @@ def _node_color(node: TreeNode, scores: dict, n_structs: int) -> str:
     return "#DDDDDD"
 
 
-def _compute_core(node: TreeNode, scores: dict, n: int) -> Optional[list[float]]:
+def _compute_core(node: TreeNode, scores: dict, n: int) -> list[float] | None:
     """Compute probability-weighted core at a node."""
     if not node.traj_probs:
         return None

@@ -378,7 +378,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument(
         "trial",
         nargs="?",
-        default="synthetic",
+        default="test",
         help="Trial name (without .json) from trials/ directory",
     )
     parser.add_argument(

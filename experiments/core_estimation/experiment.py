@@ -305,10 +305,10 @@ class Experiment:
 
     def visualize(self):
         """Generate visualizations."""
-        from visualize_experiments import visualize_results
+        from visualize_experiments import visualize_experiment
 
         print("\nGenerating visualizations...")
-        visualize_results(self.output_dir, self.output_dir / "viz")
+        visualize_experiment(self.output_dir)
 
     def print_summary(self):
         """Print results summary."""

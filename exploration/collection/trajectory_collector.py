@@ -58,6 +58,7 @@ class CollectedTrajectory(SchemaClass):
     probability: float
     log_probability: float
     per_token_logprobs: List[float] = field(default_factory=list)
+    is_greedy: bool = False  # True if this is the greedy (argmax) trajectory
     # Optional activation storage (dict mapping hook names to numpy arrays)
     activations: Optional[dict] = None
 
@@ -203,6 +204,17 @@ class TrajectoryCollector:
         seen_token_ids = set()
         total_mass = 0.0
         no_progress_count = 0
+
+        # Always get greedy trajectory first
+        greedy = self._greedy_trajectory(prompt_ids, prompt_len)
+        if greedy is not None:
+            seen_token_ids.add(greedy.token_ids)
+            trajectories.append(greedy)
+            total_mass += greedy.probability
+            logger.debug(
+                f"Greedy trajectory: p={greedy.probability:.2e}, "
+                f"total_mass={total_mass:.4f}"
+            )
 
         for iteration in range(self.config.max_iterations):
             total_iterations = iteration + 1
@@ -352,6 +364,72 @@ class TrajectoryCollector:
             )
 
             yield trajectory
+
+    def _greedy_trajectory(
+        self,
+        prompt_ids: torch.Tensor,
+        prompt_len: int,
+    ) -> Optional[CollectedTrajectory]:
+        """
+        Generate the greedy (argmax) trajectory.
+
+        Args:
+            prompt_ids: Tokenized prompt
+            prompt_len: Length of prompt
+
+        Returns:
+            CollectedTrajectory with is_greedy=True, or None if generation failed
+        """
+        config = self.config
+        device = self.model_runner.device
+        eos_id = self.model_runner.eos_token_id
+
+        generated_ids = prompt_ids.clone()
+        per_token_logprobs = []
+        log_prob_sum = 0.0
+
+        with torch.no_grad():
+            for step in range(config.max_new_tokens):
+                logits, _ = self.model_runner.get_next_token_logits(generated_ids)
+                logits = logits[0]
+
+                # Compute log probabilities (no temperature for greedy)
+                log_probs = torch.log_softmax(logits, dim=-1)
+
+                # Pick argmax
+                next_token_id = int(torch.argmax(log_probs).item())
+                token_logprob = float(log_probs[next_token_id].cpu())
+                per_token_logprobs.append(token_logprob)
+                log_prob_sum += token_logprob
+
+                next_token = torch.tensor([[next_token_id]], device=device)
+                generated_ids = torch.cat([generated_ids, next_token], dim=1)
+
+                if eos_id is not None and next_token_id == eos_id:
+                    break
+
+        gen_ids = generated_ids[0, prompt_len:].cpu().tolist()
+
+        if not gen_ids:
+            return None
+
+        tokens = tuple(self.model_runner.decode(torch.tensor([tid])) for tid in gen_ids)
+        text = self.model_runner.decode(torch.tensor(gen_ids))
+
+        activations = None
+        if config.save_activations:
+            activations = self._capture_activations(generated_ids)
+
+        return CollectedTrajectory(
+            text=text,
+            tokens=tokens,
+            token_ids=tuple(gen_ids),
+            probability=float(np.exp(log_prob_sum)),
+            log_probability=float(log_prob_sum),
+            per_token_logprobs=per_token_logprobs,
+            is_greedy=True,
+            activations=activations,
+        )
 
     def _sample_trajectory(
         self,

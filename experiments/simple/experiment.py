@@ -135,6 +135,7 @@ class Experiment:
                         {"token": tok, "logprob": lp}
                         for tok, lp in zip(t.tokens, t.per_token_logprobs)
                     ],
+                    is_greedy=t.is_greedy,
                 )
                 for t in result.trajectories
             ]
@@ -158,15 +159,21 @@ class Experiment:
                     f"  {len(trajectories)} trajectories, mass={result.total_mass:.3f}"
                 )
 
-        # Estimate cores
+        # Estimate cores - use separate judge model if specified
         estimator = CoreEstimator(CoreEstimatorConfig(use_log_space=True))
+
+        if p.estimation.model != p.generation.model:
+            print(f"Loading judge model: {p.estimation.model}...")
+            judge_runner = ModelRunner(p.estimation.model)
+        else:
+            judge_runner = runner
 
         for gen in self.gen_outputs:
             if verbose:
                 print(f"\nEstimating cores: {gen.prompt_variant}")
 
             def make_scorer(struct):
-                judge = JudgeStructure(question=struct, model_runner=runner)
+                judge = JudgeStructure(question=struct, model_runner=judge_runner)
                 return lambda text: judge.judge(text)[0]
 
             result = estimator.estimate(

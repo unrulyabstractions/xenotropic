@@ -3,11 +3,13 @@
 Visualize experiment results as trajectory trees.
 
 Creates visualizations of trajectories as:
-1. Word tree - each node is a word, edges show relative probabilities
+1. Word tree - each node is a word
 2. Phrase tree - each node is a phrase chunk
+3. Token tree - each node is a BPE token (when available)
 
-Leaf nodes are colored by dominant structure compliance.
+Edge labels show true conditional probability P(token|context).
 Edge thickness is proportional to relative probability at branch point.
+Leaf nodes are colored by dominant structure compliance.
 
 Usage: python visualize_experiment.py [trial_name]
 """
@@ -48,19 +50,25 @@ class TreeNode:
     """Node in a trajectory tree."""
 
     label: str
-    probability: float  # Absolute probability of this trajectory prefix
+    probability: float  # Conditional probability P(token|context) if available
     children: dict[str, TreeNode] = field(default_factory=dict)
     count: int = 1  # Number of trajectories through this node
+    has_true_prob: bool = False  # True if probability is actual conditional prob
     # Layout fields (set during layout computation)
     x: float = 0.0
     y: float = 0.0
     # Structure compliance (only for leaf nodes)
     structure_scores: Optional[list[float]] = None
     trajectory_text: Optional[str] = None  # Full trajectory text for leaf nodes
+    is_greedy: bool = False  # True if this is the greedy trajectory leaf
+    # Trajectories passing through this node (for computing core at branching points)
+    trajectory_probs: list[tuple[str, float]] = field(
+        default_factory=list
+    )  # [(text, prob), ...]
 
     @classmethod
-    def create_root(cls) -> TreeNode:
-        return cls(label="<root>", probability=1.0)
+    def create_root(cls, label: str = "<root>") -> TreeNode:
+        return cls(label=label, probability=1.0, has_true_prob=True)
 
     def is_leaf(self) -> bool:
         return len(self.children) == 0
@@ -82,27 +90,31 @@ def has_token_data(trajectories: list[dict]) -> bool:
 def build_token_tree(
     trajectories: list[dict],
     trajectory_scores: Optional[dict[str, list[float]]] = None,
+    prompt: str = "<root>",
 ) -> Optional[TreeNode]:
     """Build a tree from token sequences. Returns None if no token data."""
     if not has_token_data(trajectories):
         return None
 
-    root = TreeNode.create_root()
+    root = TreeNode.create_root(label=prompt)
 
     for traj in trajectories:
-        prob = traj["probability"]
+        traj_prob = traj["probability"]
         text = traj["text"]
         tokens = traj.get("per_token_logprobs", [])
+        is_greedy = traj.get("is_greedy", False)
 
         if not tokens:
             continue
 
         current = root
+        # Track trajectory through root
+        root.trajectory_probs.append((text, traj_prob))
 
         for i, tok_info in enumerate(tokens):
             token = tok_info["token"]
             logprob = tok_info.get("logprob", 0)
-            cond_prob = np.exp(logprob) if logprob else prob ** (1 / len(tokens))
+            cond_prob = np.exp(logprob) if logprob else traj_prob ** (1 / len(tokens))
             is_last = i == len(tokens) - 1
 
             if token not in current.children:
@@ -110,58 +122,158 @@ def build_token_tree(
                     label=token,
                     probability=cond_prob,
                     count=0,
+                    has_true_prob=True,
                 )
 
             current.children[token].count += 1
             current.children[token].probability = cond_prob
+            # Track trajectory through this node
+            current.children[token].trajectory_probs.append((text, traj_prob))
 
-            # If this is a leaf node, store structure scores
-            if is_last and trajectory_scores and text in trajectory_scores:
-                current.children[token].structure_scores = trajectory_scores[text]
+            # If this is a leaf node, store structure scores and greedy flag
+            if is_last:
+                if trajectory_scores and text in trajectory_scores:
+                    current.children[token].structure_scores = trajectory_scores[text]
                 current.children[token].trajectory_text = text
+                current.children[token].is_greedy = is_greedy
 
             current = current.children[token]
 
     return root
 
 
+def _compute_word_probs(tokens: list[dict], text: str) -> list[tuple[str, float]]:
+    """
+    Compute conditional probability for each word by chaining token probabilities.
+
+    P(word | context) = product of P(token_i | context, token_1..token_{i-1})
+    for all tokens that make up the word.
+
+    Returns list of (word, cond_prob) tuples.
+    """
+    if not tokens:
+        return []
+
+    # Reconstruct text from tokens to align with words
+    token_texts = [t["token"] for t in tokens]
+    token_logprobs = [t.get("logprob", 0) for t in tokens]
+
+    # Split text into words
+    words = re.findall(r"\S+", text)
+    if not words:
+        return []
+
+    result = []
+    token_idx = 0
+    char_pos = 0
+
+    for word in words:
+        # Find where this word starts in the text
+        word_start = text.find(word, char_pos)
+        if word_start == -1:
+            # Fallback: use uniform distribution
+            result.append((word, 1.0 / len(words)))
+            continue
+
+        word_end = word_start + len(word)
+
+        # Accumulate tokens that belong to this word
+        word_log_prob = 0.0
+        reconstructed = ""
+        tokens_used = 0
+
+        while token_idx < len(token_texts):
+            tok = token_texts[token_idx]
+            tok_stripped = tok.lstrip()  # Tokens often have leading space
+
+            # Check if this token contributes to the current word
+            if tok_stripped and word.startswith(reconstructed + tok_stripped):
+                reconstructed += tok_stripped
+                word_log_prob += token_logprobs[token_idx]
+                token_idx += 1
+                tokens_used += 1
+
+                if reconstructed == word:
+                    break
+            elif tok.strip() == "":
+                # Whitespace token, skip
+                token_idx += 1
+            else:
+                # Token doesn't match - might be subword that spans words
+                # Try including the token anyway if it starts the remaining part
+                remaining = word[len(reconstructed) :]
+                if remaining and tok_stripped.startswith(remaining):
+                    word_log_prob += token_logprobs[token_idx]
+                    token_idx += 1
+                    break
+                elif tok_stripped and remaining.startswith(tok_stripped):
+                    reconstructed += tok_stripped
+                    word_log_prob += token_logprobs[token_idx]
+                    token_idx += 1
+                    if reconstructed == word:
+                        break
+                else:
+                    break
+
+        # Convert log prob to probability
+        cond_prob = np.exp(word_log_prob) if tokens_used > 0 else 1.0 / len(words)
+        result.append((word, cond_prob))
+        char_pos = word_end
+
+    return result
+
+
 def build_word_tree(
     trajectories: list[dict],
     trajectory_scores: Optional[dict[str, list[float]]] = None,
+    prompt: str = "<root>",
 ) -> TreeNode:
-    """Build a tree from word sequences."""
-    root = TreeNode.create_root()
+    """Build a tree from word sequences with chained token probabilities."""
+    root = TreeNode.create_root(label=prompt)
 
     for traj in trajectories:
-        prob = traj["probability"]
         text = traj["text"]
+        traj_prob = traj["probability"]
+        is_greedy = traj.get("is_greedy", False)
+        tokens = traj.get("per_token_logprobs", [])
 
-        # Split into words (keep punctuation attached)
-        words = re.findall(r"\S+", text)
-        if not words:
-            continue
+        # Compute word conditional probabilities from token probs
+        word_probs = _compute_word_probs(tokens, text)
+        has_token_data = len(tokens) > 0
+
+        if not word_probs:
+            # Fallback to simple word splitting
+            words = re.findall(r"\S+", text)
+            prob = traj["probability"]
+            word_prob = prob ** (1 / len(words)) if words else 1.0
+            word_probs = [(w, word_prob) for w in words]
 
         current = root
-        # Distribute probability across words
-        word_prob = prob ** (1 / len(words)) if words else 1.0
+        # Track trajectory through root
+        root.trajectory_probs.append((text, traj_prob))
 
-        for i, word in enumerate(words):
-            is_last = i == len(words) - 1
+        for i, (word, word_cond_prob) in enumerate(word_probs):
+            is_last = i == len(word_probs) - 1
 
             if word not in current.children:
                 current.children[word] = TreeNode(
                     label=word,
-                    probability=word_prob,
+                    probability=word_cond_prob,
                     count=0,
+                    has_true_prob=has_token_data,
                 )
 
             current.children[word].count += 1
-            current.children[word].probability = word_prob
+            current.children[word].probability = word_cond_prob
+            # Track trajectory through this node
+            current.children[word].trajectory_probs.append((text, traj_prob))
 
-            # If this is a leaf node, store structure scores
-            if is_last and trajectory_scores and text in trajectory_scores:
-                current.children[word].structure_scores = trajectory_scores[text]
+            # If this is a leaf node, store structure scores and greedy flag
+            if is_last:
+                if trajectory_scores and text in trajectory_scores:
+                    current.children[word].structure_scores = trajectory_scores[text]
                 current.children[word].trajectory_text = text
+                current.children[word].is_greedy = is_greedy
 
             current = current.children[word]
 
@@ -171,38 +283,53 @@ def build_word_tree(
 def build_phrase_tree(
     trajectories: list[dict],
     trajectory_scores: Optional[dict[str, list[float]]] = None,
+    prompt: str = "<root>",
 ) -> TreeNode:
     """Build a tree that only branches at actual divergence points.
 
     Collapses linear chains of words into single phrase nodes.
     """
     # First build word tree
-    word_tree = build_word_tree(trajectories, trajectory_scores)
+    word_tree = build_word_tree(trajectories, trajectory_scores, prompt)
 
     # Then collapse linear chains
     return _collapse_linear_chains(word_tree)
 
 
 def _collapse_linear_chains(node: TreeNode) -> TreeNode:
-    """Collapse linear chains (single-child nodes) into phrase nodes."""
-    # Collect labels along linear chain
+    """Collapse linear chains (single-child nodes) into phrase nodes.
+
+    The probability of the collapsed node is the product of all probabilities
+    in the chain: P(phrase | parent) = P(w1|parent) * P(w2|w1) * ... * P(wn|w_{n-1})
+    """
+    # Collect labels and probabilities along linear chain
     labels = [node.label]
+    probs = [node.probability]
     current = node
+    has_true_prob = node.has_true_prob
 
     # Follow single-child chain
     while len(current.children) == 1:
         child = list(current.children.values())[0]
         labels.append(child.label)
+        probs.append(child.probability)
+        has_true_prob = has_true_prob and child.has_true_prob
         current = child
+
+    # Combined probability is product of chain probabilities
+    combined_prob = np.prod(probs)
 
     # Create collapsed node with combined label
     combined_label = " ".join(labels)
     collapsed = TreeNode(
         label=combined_label,
-        probability=current.probability,
+        probability=combined_prob,
         count=current.count,
+        has_true_prob=has_true_prob,
         structure_scores=current.structure_scores,
         trajectory_text=current.trajectory_text,
+        is_greedy=current.is_greedy,
+        trajectory_probs=current.trajectory_probs,  # Use final node's trajectory_probs
     )
 
     # Recursively collapse children
@@ -235,8 +362,8 @@ def compute_layout(
         node.y = y_offset
         return 1.0
 
-    # Sort children by count (most frequent first, at top)
-    sorted_children = sorted(node.children.values(), key=lambda c: -c.count)
+    # Sort children by probability (highest first, at top - lower y values are higher on screen)
+    sorted_children = sorted(node.children.values(), key=lambda c: c.probability)
 
     current_y = y_offset
     total_height = 0
@@ -286,8 +413,11 @@ def prune_tree(
             probability=node.probability,
             children={},
             count=node.count,
+            has_true_prob=node.has_true_prob,
             structure_scores=node.structure_scores,
             trajectory_text=node.trajectory_text,
+            is_greedy=node.is_greedy,
+            trajectory_probs=node.trajectory_probs,
         )
 
     pruned_children = {}
@@ -302,8 +432,11 @@ def prune_tree(
         probability=node.probability,
         children=pruned_children,
         count=node.count,
+        has_true_prob=node.has_true_prob,
         structure_scores=node.structure_scores,
         trajectory_text=node.trajectory_text,
+        is_greedy=node.is_greedy,
+        trajectory_probs=node.trajectory_probs,
     )
 
 
@@ -339,11 +472,44 @@ def collect_tree_data(
     return edges, nodes
 
 
+def _compute_node_core(
+    node: TreeNode,
+    trajectory_scores: dict[str, list[float]],
+    num_structures: int,
+) -> Optional[list[float]]:
+    """
+    Compute core values for each structure at a branching node.
+
+    Core = sum(prob_i * score_i) / sum(prob_i) for trajectories through this node.
+    Returns list of core values per structure, or None if no data.
+    """
+    if not node.trajectory_probs or not trajectory_scores:
+        return None
+
+    # Gather scores and probabilities for trajectories through this node
+    total_prob = 0.0
+    weighted_scores = [0.0] * num_structures
+
+    for text, prob in node.trajectory_probs:
+        if text in trajectory_scores:
+            scores = trajectory_scores[text]
+            total_prob += prob
+            for i, score in enumerate(scores):
+                weighted_scores[i] += prob * score
+
+    if total_prob == 0:
+        return None
+
+    # Normalize to get core
+    return [ws / total_prob for ws in weighted_scores]
+
+
 def plot_tree(
     root: TreeNode,
     title: str,
     output_path: Path,
     structures: list[str],
+    trajectory_scores: Optional[dict[str, list[float]]] = None,
     max_depth: int = 10,
     min_count: int = 1,
 ) -> None:
@@ -396,37 +562,52 @@ def plot_tree(
             solid_capstyle="round",
         )
 
-        # Add relative probability label
-        mid_x = (start[0] + end[0]) / 2
-        mid_y = (start[1] + end[1]) / 2
+        # Add true conditional probability label (only if we have real logprob data)
+        if child_node.has_true_prob:
+            mid_x = (start[0] + end[0]) / 2
+            mid_y = (start[1] + end[1]) / 2
 
-        prob_text = f"{rel_prob:.2f}"
-        ax.annotate(
-            prob_text,
-            (mid_x, mid_y),
-            fontsize=7,
-            ha="center",
-            va="center",
-            color="#333333",
-            bbox=dict(
-                boxstyle="round,pad=0.1",
-                facecolor="white",
-                edgecolor="none",
-                alpha=0.7,
-            ),
-            zorder=3,
-        )
+            cond_prob = child_node.probability
+            # Use scientific notation for small probabilities
+            if cond_prob < 0.01:
+                prob_text = f"{cond_prob:.1e}"
+            else:
+                prob_text = f"{cond_prob:.2f}"
+            ax.annotate(
+                prob_text,
+                (mid_x, mid_y),
+                fontsize=7,
+                ha="center",
+                va="center",
+                color="#333333",
+                bbox=dict(
+                    boxstyle="round,pad=0.1",
+                    facecolor="white",
+                    edgecolor="none",
+                    alpha=0.7,
+                ),
+                zorder=3,
+            )
 
     # Draw nodes
     for node, pos in nodes:
         is_leaf = node.is_leaf()
+        is_branching = len(node.children) > 1
 
         if is_leaf and node.structure_scores is not None:
-            # Color by dominant structure
+            # Color leaf by dominant structure
             dominant_idx = int(np.argmax(node.structure_scores))
             node_color = PASTEL_COLORS[dominant_idx % len(PASTEL_COLORS)]
+        elif is_branching and trajectory_scores and len(structures) > 0:
+            # Color branching node by dominant structure in core
+            core = _compute_node_core(node, trajectory_scores, len(structures))
+            if core is not None:
+                dominant_idx = int(np.argmax(core))
+                node_color = PASTEL_COLORS[dominant_idx % len(PASTEL_COLORS)]
+            else:
+                node_color = "#DDDDDD"
         else:
-            node_color = "#DDDDDD"  # Gray for non-leaf nodes
+            node_color = "#DDDDDD"  # Gray for other nodes
 
         size = 60 + node.count * 30
 
@@ -460,6 +641,20 @@ def plot_tree(
             fontfamily="monospace",
             zorder=4,
         )
+
+        # Add "greedy" indicator to the right for greedy leaf nodes
+        if is_leaf and node.is_greedy:
+            ax.annotate(
+                "greedy",
+                (pos[0] + 0.5, pos[1]),
+                fontsize=7,
+                ha="left",
+                va="center",
+                fontfamily="monospace",
+                fontweight="bold",
+                color="#CD7F32",  # Red-gold / bronze color
+                zorder=4,
+            )
 
         # For leaf nodes with structure scores, show colored compliance values below label
         if is_leaf and node.structure_scores is not None:
@@ -534,9 +729,12 @@ def plot_tree(
 
     # Add margins
     x_margin = x_range * 0.15 + 3
-    y_margin = max(y_range * 0.1, 0.5)
+    y_margin_top = max(y_range * 0.1, 0.5)
+    y_margin_bottom = max(
+        y_range * 0.1, 1.0
+    )  # Extra margin at bottom for structure scores
     ax.set_xlim(min(all_x) - 0.5, max(all_x) + x_margin)
-    ax.set_ylim(min(all_y) - y_margin, max(all_y) + y_margin)
+    ax.set_ylim(min(all_y) - y_margin_bottom, max(all_y) + y_margin_top)
 
     # Add legend for structures
     if structures:
@@ -584,6 +782,7 @@ def visualize_results(result_dir: Path, output_dir: Path) -> None:
 
         trajectories = gen_data["trajectories"]
         prompt_variant = gen_data["prompt_variant"]
+        prompt_text = gen_data.get("prompt_text", "<root>")
 
         if not trajectories:
             print("  No trajectories to visualize")
@@ -615,35 +814,38 @@ def visualize_results(result_dir: Path, output_dir: Path) -> None:
             print("  No estimation data found, skipping structure coloring")
 
         # Build and plot word tree
-        word_tree = build_word_tree(trajectories, trajectory_scores)
+        word_tree = build_word_tree(trajectories, trajectory_scores, prompt_text)
         plot_tree(
             word_tree,
             "Word Tree",
             output_dir / "word_tree.png",
             structures=structures,
+            trajectory_scores=trajectory_scores,
             max_depth=10,
             min_count=1,
         )
 
         # Build and plot phrase tree
-        phrase_tree = build_phrase_tree(trajectories, trajectory_scores)
+        phrase_tree = build_phrase_tree(trajectories, trajectory_scores, prompt_text)
         plot_tree(
             phrase_tree,
             "Phrase Tree",
             output_dir / "phrase_tree.png",
             structures=structures,
+            trajectory_scores=trajectory_scores,
             max_depth=6,
             min_count=1,
         )
 
         # Build and plot token tree (only if we have token data)
-        token_tree = build_token_tree(trajectories, trajectory_scores)
+        token_tree = build_token_tree(trajectories, trajectory_scores, prompt_text)
         if token_tree is not None:
             plot_tree(
                 token_tree,
                 "Token Tree",
                 output_dir / "token_tree.png",
                 structures=structures,
+                trajectory_scores=trajectory_scores,
                 max_depth=15,
                 min_count=1,
             )

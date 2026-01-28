@@ -69,6 +69,7 @@ class TrajectoryRecord(SchemaClass):
     per_token_logprobs: list[dict] = field(
         default_factory=list
     )  # [{token, logprob}, ...] - tokens can be extracted from here
+    is_greedy: bool = False  # True if this is the greedy (argmax) trajectory
 
 
 @dataclass

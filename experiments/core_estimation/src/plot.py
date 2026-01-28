@@ -34,9 +34,9 @@ def visualize_experiment(result_dir: Path, output_dir: Path | None = None) -> No
             continue
 
         scores, structures = _load_scores(result_dir, variant, trajectories)
-        greedy_text = next(
-            (t["text"] for t in trajectories if t.get("is_greedy")), None
-        )
+        greedy_traj = next((t for t in trajectories if t.get("is_greedy")), None)
+        # Full greedy text = prompt + continuation
+        greedy_text = prompt + greedy_traj["text"] if greedy_traj else None
 
         for mode in ["word", "phrase", "token"]:
             tree = build_tree(trajectories, scores, prompt, mode)

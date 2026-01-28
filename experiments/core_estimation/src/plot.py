@@ -194,7 +194,7 @@ def plot_tree(
     # Draw tree
     ax_tree.axis("off")
     _draw_edges(ax_tree, edges)
-    _draw_nodes(ax_tree, nodes, scores, len(structures), layout_info["x_sp"])
+    _draw_nodes(ax_tree, nodes, scores, structures, layout_info["x_sp"])
 
     # Calculate axis limits with padding for labels
     x_range = max(all_x) - min(all_x) if len(set(all_x)) > 1 else 1
@@ -466,18 +466,24 @@ def _draw_edges(ax, edges: list) -> list:
     return edge_texts
 
 
-def _draw_nodes(ax, nodes: list, scores: dict, n_structs: int, x_sp: float) -> None:
+def _draw_nodes(
+    ax, nodes: list, scores: dict, structures: list[str], x_sp: float
+) -> None:
     """
-    Draw tree nodes with labels and scores.
+    Draw tree nodes with labels and structure annotations.
 
     Labels are positioned to avoid edge crossings:
     - Leaf nodes: label to the RIGHT (no outgoing edges)
     - Internal nodes: label BELOW (edges go right, label doesn't interfere)
+
+    Nodes are colored by their dominant structure (core). Leaf nodes show
+    the structure name below the label. Greedy nodes get a star marker.
     """
-    # Calculate node radius in data coordinates (for label offset)
     node_radius = 0.15
+    n_structs = len(structures)
 
     for node, (x, y) in nodes:
+        # Color by dominant structure (uses core for branching nodes)
         color = _node_color(node, scores, n_structs)
         node_size = 50 + node.count * 25
 
@@ -501,9 +507,10 @@ def _draw_nodes(ax, nodes: list, scores: dict, n_structs: int, x_sp: float) -> N
 
         if node.is_leaf():
             # Leaf: label to the RIGHT of node (no outgoing edges to cross)
+            label_x = x + node_radius + 0.1
             ax.annotate(
                 label,
-                (x + node_radius + 0.1, y),
+                (label_x, y),
                 fontsize=8,
                 ha="left",
                 va="center",
@@ -511,9 +518,9 @@ def _draw_nodes(ax, nodes: list, scores: dict, n_structs: int, x_sp: float) -> N
                 zorder=4,
             )
 
-            # Score below label
-            if node.scores:
-                _draw_scores(ax, x + node_radius + 0.1, y, node.scores, n_structs)
+            # Structure name below label
+            if node.scores and structures:
+                _draw_structure_tag(ax, label_x, y, node.scores, structures)
 
             # Greedy star above the node
             if node.is_greedy:
@@ -539,27 +546,34 @@ def _draw_nodes(ax, nodes: list, scores: dict, n_structs: int, x_sp: float) -> N
             )
 
 
-def _draw_scores(
-    ax, label_x: float, y: float, node_scores: list[float], n_structs: int
+def _draw_structure_tag(
+    ax, label_x: float, y: float, node_scores: list[float], structures: list[str]
 ) -> None:
-    """Draw score indicator below the leaf node label."""
-    n = len(node_scores)
-    if n == 0:
+    """Draw structure name tag below the leaf node label."""
+    if not node_scores or not structures:
         return
 
-    # Skip if all scores are near zero
+    # Skip if all scores are near zero (no clear structure)
     if max(node_scores) < 0.01:
         return
 
-    # Position below the label (which is to the right of node)
-    score_y = y - 0.25
+    # Find dominant structure
     dominant_idx = int(np.argmax(node_scores))
-    dominant_val = node_scores[dominant_idx]
+    dominant_score = node_scores[dominant_idx]
+    structure_name = structures[dominant_idx] if dominant_idx < len(structures) else "?"
+
+    # Truncate long structure names
+    if len(structure_name) > 12:
+        structure_name = structure_name[:10] + ".."
+
+    # Position below the label
+    tag_y = y - 0.25
     color = _darken(COLORS[dominant_idx % len(COLORS)])
 
+    # Show [structure_name] with score
     ax.annotate(
-        f"{dominant_val:.2f}",
-        (label_x, score_y),
+        f"[{structure_name}] {dominant_score:.2f}",
+        (label_x, tag_y),
         fontsize=6,
         ha="left",
         va="top",

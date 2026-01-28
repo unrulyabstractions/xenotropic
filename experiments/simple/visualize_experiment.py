@@ -171,49 +171,46 @@ def build_word_tree(
 def build_phrase_tree(
     trajectories: list[dict],
     trajectory_scores: Optional[dict[str, list[float]]] = None,
-    chunk_size: int = 3,
 ) -> TreeNode:
-    """Build a tree from phrase chunks."""
-    root = TreeNode.create_root()
+    """Build a tree that only branches at actual divergence points.
 
-    for traj in trajectories:
-        prob = traj["probability"]
-        text = traj["text"]
+    Collapses linear chains of words into single phrase nodes.
+    """
+    # First build word tree
+    word_tree = build_word_tree(trajectories, trajectory_scores)
 
-        # Split into words then group into chunks
-        words = re.findall(r"\S+", text)
-        chunks = []
-        for i in range(0, len(words), chunk_size):
-            chunk = " ".join(words[i : i + chunk_size])
-            chunks.append(chunk)
+    # Then collapse linear chains
+    return _collapse_linear_chains(word_tree)
 
-        if not chunks:
-            continue
 
-        current = root
-        chunk_prob = prob ** (1 / len(chunks)) if chunks else 1.0
+def _collapse_linear_chains(node: TreeNode) -> TreeNode:
+    """Collapse linear chains (single-child nodes) into phrase nodes."""
+    # Collect labels along linear chain
+    labels = [node.label]
+    current = node
 
-        for i, chunk in enumerate(chunks):
-            is_last = i == len(chunks) - 1
+    # Follow single-child chain
+    while len(current.children) == 1:
+        child = list(current.children.values())[0]
+        labels.append(child.label)
+        current = child
 
-            if chunk not in current.children:
-                current.children[chunk] = TreeNode(
-                    label=chunk,
-                    probability=chunk_prob,
-                    count=0,
-                )
+    # Create collapsed node with combined label
+    combined_label = " ".join(labels)
+    collapsed = TreeNode(
+        label=combined_label,
+        probability=current.probability,
+        count=current.count,
+        structure_scores=current.structure_scores,
+        trajectory_text=current.trajectory_text,
+    )
 
-            current.children[chunk].count += 1
-            current.children[chunk].probability = chunk_prob
+    # Recursively collapse children
+    for child in current.children.values():
+        collapsed_child = _collapse_linear_chains(child)
+        collapsed.children[collapsed_child.label] = collapsed_child
 
-            # If this is a leaf node, store structure scores
-            if is_last and trajectory_scores and text in trajectory_scores:
-                current.children[chunk].structure_scores = trajectory_scores[text]
-                current.children[chunk].trajectory_text = text
-
-            current = current.children[chunk]
-
-    return root
+    return collapsed
 
 
 # -----------------------------------------------------------------------------
@@ -629,7 +626,7 @@ def visualize_results(result_dir: Path, output_dir: Path) -> None:
         )
 
         # Build and plot phrase tree
-        phrase_tree = build_phrase_tree(trajectories, trajectory_scores, chunk_size=3)
+        phrase_tree = build_phrase_tree(trajectories, trajectory_scores)
         plot_tree(
             phrase_tree,
             "Phrase Tree",

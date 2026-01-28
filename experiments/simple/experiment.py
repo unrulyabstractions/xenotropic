@@ -7,7 +7,7 @@ import shutil
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable
 
 import numpy as np
 from schemas import (
@@ -27,15 +27,18 @@ SCRIPT_DIR = Path(__file__).parent
 class Experiment:
     """Manages experiment lifecycle: run, save, visualize."""
 
-    def __init__(self, params: Params, output_dir: Path, synthetic: bool = False):
+    def __init__(self, params: Params, output_dir: Path):
         self.params = params
         self.output_dir = output_dir
-        self.synthetic = synthetic
         self.gen_outputs: list[GenerationOutput] = []
         self.est_outputs: list[CoreEstimationOutput] = []
 
+    @property
+    def is_synthetic(self) -> bool:
+        return self.params.generation.model.lower() == "synthetic"
+
     @classmethod
-    def from_trial(cls, trial_name: str, synthetic: bool = False) -> Experiment:
+    def from_trial(cls, trial_name: str) -> Experiment:
         """Load experiment from trial config file."""
         trial_path = SCRIPT_DIR / "trials" / f"{trial_name}.json"
         if not trial_path.exists():
@@ -53,28 +56,27 @@ class Experiment:
             estimation=EstimationConfig(**data["estimation"]),
         )
 
-        suffix = "_synthetic" if synthetic else ""
-        output_dir = SCRIPT_DIR / "out" / f"{trial_name}{suffix}"
+        return cls(params, SCRIPT_DIR / "out" / trial_name)
 
-        return cls(params, output_dir, synthetic)
-
-    def run(self, **kwargs) -> None:
+    def run(self, verbose: bool = True, **kwargs) -> None:
         """Run the experiment."""
         if self.output_dir.exists():
             shutil.rmtree(self.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"Output: {self.output_dir}")
-        self._print_header()
+        self._print_header(verbose)
 
-        if self.synthetic:
-            self._run_synthetic(**kwargs)
+        if self.is_synthetic:
+            self._run_synthetic(verbose=verbose, **kwargs)
         else:
-            self._run_real(**kwargs)
+            self._run_real(verbose=verbose, **kwargs)
 
-    def _print_header(self):
+    def _print_header(self, verbose: bool):
+        if not verbose:
+            return
         p = self.params
-        mode = "SYNTHETIC" if self.synthetic else ""
+        mode = "SYNTHETIC" if self.is_synthetic else ""
+        print(f"Output: {self.output_dir}")
         print("=" * 60)
         print(f"EXPERIMENT {mode}: {p.experiment_id}")
         print("=" * 60)
@@ -93,11 +95,12 @@ class Experiment:
     # -------------------------------------------------------------------------
 
     def _run_real(
-        self, target_mass: float = 0.9, max_iterations: int = 200, verbose: bool = True
+        self,
+        target_mass: float = 0.9,
+        max_iterations: int = 200,
+        verbose: bool = True,
     ):
         from exploration import (
-            CoreEstimator,
-            CoreEstimatorConfig,
             ModelRunner,
             TrajectoryCollector,
             TrajectoryCollectorConfig,
@@ -107,10 +110,12 @@ class Experiment:
         p = self.params
         prompts = self._build_prompts()
 
-        print("Loading model...")
+        if verbose:
+            print("Loading model...")
         runner = ModelRunner(p.generation.model)
 
-        for name, text in prompts.items():
+        # Collect trajectories
+        for name, prompt in prompts.items():
             if verbose:
                 print(f"\nCollecting: {name}")
 
@@ -124,98 +129,88 @@ class Experiment:
                 max_trajectories=p.generation.max_trajectories,
                 seed=p.generation.seed,
             )
-            result = TrajectoryCollector(runner, config).collect(text)
+            result = TrajectoryCollector(runner, config).collect(prompt)
 
-            trajectories = [
-                TrajectoryRecord(
-                    text=t.text,
-                    probability=t.probability,
-                    log_probability=t.log_probability,
-                    per_token_logprobs=[
-                        {"token": tok, "logprob": lp}
-                        for tok, lp in zip(t.tokens, t.per_token_logprobs)
-                    ],
-                    is_greedy=t.is_greedy,
-                )
-                for t in result.trajectories
-            ]
-
-            self.gen_outputs.append(
-                GenerationOutput(
-                    param_id=p.param_id,
-                    experiment_id=p.experiment_id,
-                    prompt_variant=name,
-                    prompt_text=text,
-                    model=p.generation.model,
-                    timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"),
-                    total_mass=result.total_mass,
-                    num_trajectories=len(trajectories),
-                    trajectories=trajectories,
-                )
-            )
+            self._store_generation(name, prompt, result.trajectories, result.total_mass)
 
             if verbose:
                 print(
-                    f"  {len(trajectories)} trajectories, mass={result.total_mass:.3f}"
+                    f"  {len(result.trajectories)} trajectories, mass={result.total_mass:.3f}"
                 )
 
-        # Estimate cores - use separate judge model if specified
-        estimator = CoreEstimator(CoreEstimatorConfig(use_log_space=True))
-
+        # Load judge model if different
+        judge_runner = runner
         if p.estimation.model != p.generation.model:
-            print(f"Loading judge model: {p.estimation.model}...")
-            judge_runner = ModelRunner(p.estimation.model)
-        else:
-            judge_runner = runner
-
-        for gen in self.gen_outputs:
             if verbose:
-                print(f"\nEstimating cores: {gen.prompt_variant}")
+                print(f"\nLoading judge model: {p.estimation.model}...")
+            judge_runner = ModelRunner(p.estimation.model)
 
-            def make_scorer(struct):
-                judge = JudgeStructure(question=struct, model_runner=judge_runner)
-                return lambda text: judge.judge(text)[0]
+        # Estimate cores
+        def make_scorer(struct: str) -> Callable[[str], float]:
+            judge = JudgeStructure(question=struct, model_runner=judge_runner)
+            return lambda text: judge.judge(text)[0]
 
-            result = estimator.estimate(
-                gen.trajectories, p.estimation.structures, make_scorer, gen.prompt_text
+        self._estimate_cores(make_scorer, verbose)
+
+    def _store_generation(
+        self, name: str, prompt: str, trajectories, total_mass: float
+    ):
+        """Store generation output from collected trajectories."""
+        p = self.params
+        records = [
+            TrajectoryRecord(
+                text=t.text,
+                probability=t.probability,
+                log_probability=t.log_probability,
+                per_token_logprobs=[
+                    {"token": tok, "logprob": lp}
+                    for tok, lp in zip(t.tokens, t.per_token_logprobs)
+                ],
+                is_greedy=getattr(t, "is_greedy", False),
             )
+            for t in trajectories
+        ]
 
-            self.est_outputs.append(
-                self._make_est_output(gen, result, p.estimation.model)
+        self.gen_outputs.append(
+            GenerationOutput(
+                param_id=p.param_id,
+                experiment_id=p.experiment_id,
+                prompt_variant=name,
+                prompt_text=prompt,
+                model=p.generation.model,
+                timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"),
+                total_mass=total_mass,
+                num_trajectories=len(records),
+                trajectories=records,
             )
+        )
 
     # -------------------------------------------------------------------------
     # Synthetic experiment
     # -------------------------------------------------------------------------
 
-    def _run_synthetic(
-        self,
-        num_trajectories: Optional[int] = None,
-        seed: int = 42,
-        verbose: bool = True,
-    ):
-        from exploration import CoreEstimator, CoreEstimatorConfig
+    def _run_synthetic(self, seed: int = 42, verbose: bool = True, **_):
 
         p = self.params
         prompts = self._build_prompts()
-        num_traj = num_trajectories or p.generation.max_trajectories or 20
+        num_traj = p.generation.max_trajectories or 20
 
         gen = _SyntheticGenerator(seed)
         scorer = _SyntheticScorer(seed + 1000)
 
-        for name, text in prompts.items():
+        for name, prompt in prompts.items():
             if verbose:
                 print(f"\nGenerating: {name}")
 
-            trajectories, mass = gen.generate(text, num_traj)
+            trajectories, mass = gen.generate(prompt, num_traj)
 
             self.gen_outputs.append(
                 GenerationOutput(
                     param_id=p.param_id,
                     experiment_id=p.experiment_id,
                     prompt_variant=name,
-                    prompt_text=text,
-                    model=p.generation.model + " (synthetic)",
+                    prompt_text=prompt,
+                    model="synthetic",
                     timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"),
                     total_mass=mass,
                     num_trajectories=len(trajectories),
@@ -226,27 +221,40 @@ class Experiment:
             if verbose:
                 print(f"  {len(trajectories)} trajectories, mass={mass:.3f}")
 
-        # Estimate cores
-        estimator = CoreEstimator(CoreEstimatorConfig(use_log_space=False))
+        def make_scorer(struct: str) -> Callable[[str], float]:
+            return lambda text: scorer.score(text, struct)
 
-        for gen_out in self.gen_outputs:
+        self._estimate_cores(make_scorer, verbose, use_log_space=False)
+
+    # -------------------------------------------------------------------------
+    # Core estimation (shared)
+    # -------------------------------------------------------------------------
+
+    def _estimate_cores(
+        self,
+        make_scorer: Callable[[str], Callable[[str], float]],
+        verbose: bool,
+        use_log_space: bool = True,
+    ):
+        from exploration import CoreEstimator, CoreEstimatorConfig
+
+        p = self.params
+        estimator = CoreEstimator(CoreEstimatorConfig(use_log_space=use_log_space))
+
+        for gen in self.gen_outputs:
             if verbose:
-                print(f"\nEstimating cores: {gen_out.prompt_variant}")
-
-            def make_scorer(struct):
-                return lambda text: scorer.score(text, struct)
+                print(f"\nEstimating cores: {gen.prompt_variant}")
 
             result = estimator.estimate(
-                gen_out.trajectories, p.estimation.structures, make_scorer, ""
+                gen.trajectories,
+                p.estimation.structures,
+                make_scorer,
+                gen.prompt_text,
             )
 
-            self.est_outputs.append(
-                self._make_est_output(
-                    gen_out, result, p.estimation.model + " (synthetic)"
-                )
-            )
+            self.est_outputs.append(self._make_est_output(gen, result))
 
-    def _make_est_output(self, gen, result, judge_model) -> CoreEstimationOutput:
+    def _make_est_output(self, gen: GenerationOutput, result) -> CoreEstimationOutput:
         p = self.params
         structures = [
             StructureResult(
@@ -262,7 +270,7 @@ class Experiment:
             param_id=p.param_id,
             experiment_id=p.experiment_id,
             timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"),
-            judge_model=judge_model,
+            judge_model=p.estimation.model if not self.is_synthetic else "synthetic",
             prompt_variant=gen.prompt_variant,
             prompt_text=gen.prompt_text,
             num_trajectories=gen.num_trajectories,
@@ -299,9 +307,8 @@ class Experiment:
         """Generate visualizations."""
         from visualize_experiment import visualize_results
 
-        viz_dir = self.output_dir / "viz"
         print("\nGenerating visualizations...")
-        visualize_results(self.output_dir, viz_dir)
+        visualize_results(self.output_dir, self.output_dir / "viz")
 
     def print_summary(self):
         """Print results summary."""
@@ -322,29 +329,28 @@ class Experiment:
 
 
 class _SyntheticGenerator:
+    """Generates fake trajectories with Zipf-like probability distribution."""
+
+    CONTINUATIONS = [
+        "Beautiful.",
+        "beautiful.",
+        "red.",
+        "Pretty.",
+        "delicate.",
+        "lovely.",
+        "amazing.",
+        "perfect.",
+        "wonderful.",
+        "stunning.",
+    ]
+
     def __init__(self, seed: int):
         self.rng = np.random.default_rng(seed)
 
-    def generate(self, prompt: str, n: int):
-        continuations = [
-            "Beautiful.",
-            "beautiful.",
-            "red.",
-            "Pretty.",
-            "delicate.",
-            "lovely.",
-            "amazing.",
-            "perfect.",
-            "wonderful.",
-            "stunning.",
-        ]
-        ranks = np.arange(1, len(continuations) + 1)
-        probs = 1.0 / (ranks**1.2)
-        probs = probs * (1 + 0.1 * self.rng.standard_normal(len(probs)))
-        probs = np.maximum(probs, 0.001)
-        probs = probs / probs.sum()
+    def generate(self, prompt: str, n: int) -> tuple[list[TrajectoryRecord], float]:
+        probs = self._zipf_probs(len(self.CONTINUATIONS))
+        n = min(n, len(self.CONTINUATIONS))
 
-        n = min(n, len(continuations))
         trajectories = []
         mass = 0.0
 
@@ -353,22 +359,31 @@ class _SyntheticGenerator:
             mass += p
             trajectories.append(
                 TrajectoryRecord(
-                    text=prompt + continuations[i],
+                    text=prompt + self.CONTINUATIONS[i],
                     probability=p,
                     log_probability=float(np.log(p + 1e-10)),
                     per_token_logprobs=[],
+                    is_greedy=(i == 0),
                 )
             )
 
         return trajectories, mass
 
+    def _zipf_probs(self, n: int) -> np.ndarray:
+        ranks = np.arange(1, n + 1)
+        probs = 1.0 / (ranks**1.2)
+        probs *= 1 + 0.1 * self.rng.standard_normal(n)
+        probs = np.maximum(probs, 0.001)
+        return probs / probs.sum()
+
 
 class _SyntheticScorer:
+    """Generates deterministic but varied scores based on text+structure hash."""
+
     def __init__(self, seed: int):
         self.rng = np.random.default_rng(seed)
 
     def score(self, text: str, structure: str) -> float:
         h = hash(text + structure) % 1000
-        return float(
-            np.clip((h / 1000) * 0.6 + 0.2 + self.rng.standard_normal() * 0.1, 0, 1)
-        )
+        base = (h / 1000) * 0.6 + 0.2
+        return float(np.clip(base + self.rng.standard_normal() * 0.1, 0, 1))

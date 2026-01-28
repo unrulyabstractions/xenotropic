@@ -137,6 +137,7 @@ class CollectionResult(SchemaClass):
     total_mass: float
     iterations: int
     stats: Optional[CollectionStats] = None
+    formatted_prompt: Optional[str] = None  # Prompt with chat template applied
 
     @property
     def probabilities(self) -> np.ndarray:
@@ -305,6 +306,7 @@ class TrajectoryCollector:
             total_mass=total_mass,
             iterations=len(trajectories),
             stats=stats,
+            formatted_prompt=formatted_prompt,
         )
 
     def collect_iterator(

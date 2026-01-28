@@ -130,7 +130,13 @@ class Experiment:
             )
             result = TrajectoryCollector(runner, config).collect(prompt)
 
-            self._store_generation(name, prompt, result.trajectories, result.total_mass)
+            self._store_generation(
+                name,
+                prompt,
+                result.formatted_prompt or prompt,
+                result.trajectories,
+                result.total_mass,
+            )
 
             if verbose:
                 print(
@@ -152,7 +158,12 @@ class Experiment:
         self._estimate_cores(make_scorer, verbose)
 
     def _store_generation(
-        self, name: str, prompt: str, trajectories, total_mass: float
+        self,
+        name: str,
+        prompt: str,
+        formatted_prompt: str,
+        trajectories,
+        total_mass: float,
     ):
         """Store generation output from collected trajectories."""
         p = self.params
@@ -176,6 +187,7 @@ class Experiment:
                 experiment_id=p.experiment_id,
                 prompt_variant=name,
                 prompt_text=prompt,
+                formatted_prompt=formatted_prompt,
                 model=p.generation.model,
                 timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"),
                 total_mass=total_mass,
@@ -210,6 +222,7 @@ class Experiment:
                     experiment_id=p.experiment_id,
                     prompt_variant=name,
                     prompt_text=prompt,
+                    formatted_prompt=prompt,  # No chat template for synthetic
                     model="synthetic",
                     timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"),
                     total_mass=mass,

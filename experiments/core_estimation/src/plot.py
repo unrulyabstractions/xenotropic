@@ -12,6 +12,11 @@ from trees import TreeNode, build_tree
 
 COLORS = ["#FFB3BA", "#BAFFC9", "#BAE1FF", "#FFFFBA", "#FFDFba", "#E0BBE4"]
 
+# Text part types for styled rendering
+TEXT_PART_TEMPLATE = "template"  # Chat template prefix/suffix - gray, smaller
+TEXT_PART_PROMPT = "prompt"  # User's prompt - normal
+TEXT_PART_CONTINUATION = "continuation"  # Model continuation - gray
+
 
 def visualize_experiment(result_dir: Path, output_dir: Path | None = None) -> None:
     """Visualize a single experiment's results."""
@@ -27,6 +32,7 @@ def visualize_experiment(result_dir: Path, output_dir: Path | None = None) -> No
 
         trajectories = data["trajectories"]
         prompt = data.get("prompt_text", "<root>")
+        formatted_prompt = data.get("formatted_prompt", prompt)
         variant = data["prompt_variant"]
 
         if not trajectories:
@@ -35,8 +41,11 @@ def visualize_experiment(result_dir: Path, output_dir: Path | None = None) -> No
 
         scores, structures = _load_scores(result_dir, variant, trajectories)
         greedy_traj = next((t for t in trajectories if t.get("is_greedy")), None)
-        # Full greedy text = prompt + continuation
-        greedy_text = prompt + greedy_traj["text"] if greedy_traj else None
+        # Build text parts for styled rendering
+        greedy_parts = None
+        if greedy_traj:
+            continuation = greedy_traj["text"]
+            greedy_parts = _build_text_parts(prompt, formatted_prompt, continuation)
 
         for mode in ["word", "phrase", "token"]:
             tree = build_tree(trajectories, scores, prompt, mode)
@@ -47,7 +56,7 @@ def visualize_experiment(result_dir: Path, output_dir: Path | None = None) -> No
                     output_dir / f"{mode}_tree.png",
                     structures,
                     scores,
-                    greedy_text=greedy_text,
+                    greedy_parts=greedy_parts,
                 )
             elif mode == "token":
                 print("    Skipping token tree (no token data)")
@@ -73,13 +82,53 @@ def _load_scores(
     return scores, structures
 
 
+def _build_text_parts(
+    prompt: str, formatted_prompt: str, continuation: str
+) -> list[tuple[str, str]]:
+    """
+    Build list of (text, part_type) tuples for styled rendering.
+
+    Splits formatted_prompt into template prefix, user prompt, template suffix,
+    then adds continuation.
+    """
+    parts = []
+
+    # Find where the user prompt appears in the formatted prompt
+    prompt_start = formatted_prompt.find(prompt)
+
+    if prompt_start == -1:
+        # Prompt not found in formatted - just return the whole thing as template
+        parts.append((formatted_prompt, TEXT_PART_TEMPLATE))
+        parts.append((continuation, TEXT_PART_CONTINUATION))
+        return parts
+
+    # Template prefix (before user prompt)
+    if prompt_start > 0:
+        prefix = formatted_prompt[:prompt_start]
+        parts.append((prefix, TEXT_PART_TEMPLATE))
+
+    # User prompt
+    parts.append((prompt, TEXT_PART_PROMPT))
+
+    # Template suffix (after user prompt)
+    prompt_end = prompt_start + len(prompt)
+    if prompt_end < len(formatted_prompt):
+        suffix = formatted_prompt[prompt_end:]
+        parts.append((suffix, TEXT_PART_TEMPLATE))
+
+    # Model continuation
+    parts.append((continuation, TEXT_PART_CONTINUATION))
+
+    return parts
+
+
 def plot_tree(
     root: TreeNode,
     title: str,
     path: Path,
     structures: list[str],
     scores: dict[str, list[float]],
-    greedy_text: str | None = None,
+    greedy_parts: list[tuple[str, str]] | None = None,
 ) -> None:
     """Render tree to PNG."""
     _layout(root)
@@ -101,14 +150,10 @@ def plot_tree(
     if structures:
         _draw_legend(ax, structures)
 
-    # Title with greedy text below
-    if greedy_text:
-        ax.set_title(
-            f'{title}\n"{greedy_text}"',
-            fontsize=12,
-            fontweight="bold",
-            fontfamily="monospace",
-        )
+    # Title with styled greedy text below
+    if greedy_parts:
+        ax.set_title(title, fontsize=14, fontweight="bold")
+        _draw_styled_text(fig, greedy_parts)
     else:
         ax.set_title(title, fontsize=14, fontweight="bold")
     ax.axis("off")
@@ -124,6 +169,88 @@ def plot_tree(
     plt.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"  Saved: {path}")
+
+
+def _draw_styled_text(
+    fig, parts: list[tuple[str, str]], max_chars_per_line: int = 100
+) -> None:
+    """Draw styled text below the title using multiple text elements, with word wrapping."""
+    # Style definitions for each part type
+    styles = {
+        TEXT_PART_TEMPLATE: {"color": "#999999", "fontsize": 6, "fontweight": "normal"},
+        TEXT_PART_PROMPT: {"color": "#222222", "fontsize": 7, "fontweight": "bold"},
+        TEXT_PART_CONTINUATION: {
+            "color": "#666666",
+            "fontsize": 7,
+            "fontweight": "normal",
+        },
+    }
+
+    # Escape newlines for display
+    parts = [(text.replace("\n", "↵"), part_type) for text, part_type in parts]
+
+    # Build lines with word wrapping
+    lines = []  # Each line is a list of (text, part_type) tuples
+    current_line = []
+    current_len = 0
+
+    for text, part_type in parts:
+        # Split text into chunks that fit
+        remaining = text
+        while remaining:
+            space_left = max_chars_per_line - current_len
+            if len(remaining) <= space_left:
+                current_line.append((remaining, part_type))
+                current_len += len(remaining)
+                remaining = ""
+            else:
+                # Add what fits to current line
+                if space_left > 0:
+                    current_line.append((remaining[:space_left], part_type))
+                # Start new line with rest
+                lines.append(current_line)
+                current_line = []
+                current_len = 0
+                remaining = remaining[space_left:]
+
+    if current_line:
+        lines.append(current_line)
+
+    # Limit to 3 lines max
+    if len(lines) > 3:
+        lines = lines[:3]
+        # Add ellipsis to last line
+        if lines[-1]:
+            last_text, last_type = lines[-1][-1]
+            lines[-1][-1] = (last_text + "...", last_type)
+
+    # Draw each line
+    y_pos = 0.945
+    line_height = 0.018
+
+    for line_parts in lines:
+        # Calculate line width for centering
+        line_len = sum(len(text) for text, _ in line_parts)
+        x_pos = 0.5 - (line_len * 0.0028)  # Rough centering
+        x_pos = max(0.02, x_pos)
+
+        for text, part_type in line_parts:
+            style = styles.get(part_type, styles[TEXT_PART_PROMPT])
+            fig.text(
+                x_pos,
+                y_pos,
+                text,
+                fontfamily="monospace",
+                ha="left",
+                va="top",
+                transform=fig.transFigure,
+                **style,
+            )
+            # Advance position (rough character width estimate based on fontsize)
+            char_width = 0.0056 if style["fontsize"] >= 7 else 0.0048
+            x_pos += len(text) * char_width
+
+        y_pos -= line_height
 
 
 def _layout(

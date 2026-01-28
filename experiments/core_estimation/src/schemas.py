@@ -80,6 +80,7 @@ class GenerationOutput(SchemaClass):
     experiment_id: str  # Human-readable name
     prompt_variant: str  # "base", "branch1", etc.
     prompt_text: str
+    formatted_prompt: str  # Prompt with chat template applied
     model: str
     timestamp: str
     total_mass: float

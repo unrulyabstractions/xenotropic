@@ -142,115 +142,150 @@ def plot_tree(
     n_leaves = sum(1 for n, _ in nodes if n.is_leaf())
     depth = max(all_x) / 2.5 if all_x else 1
 
-    fig, ax = plt.subplots(figsize=(max(12, (depth + 1) * 3), max(6, n_leaves * 0.8)))
+    # Calculate figure dimensions
+    tree_width = max(10, (depth + 1) * 2.5)
+    tree_height = max(4, n_leaves * 0.7)
 
-    _draw_edges(ax, edges)
-    _draw_nodes(ax, nodes, scores, len(structures))
+    # Add space for header (title + styled text) and legend
+    header_height = 1.2 if greedy_parts else 0.6
+    legend_height = 0.8 if structures else 0
+    total_height = tree_height + header_height + legend_height
 
+    fig = plt.figure(figsize=(tree_width, total_height))
+
+    # Create grid: header at top, tree in middle, legend at bottom
     if structures:
-        _draw_legend(ax, structures)
-
-    # Title with styled greedy text below
-    if greedy_parts:
-        ax.set_title(title, fontsize=14, fontweight="bold")
-        _draw_styled_text(fig, greedy_parts)
+        gs = fig.add_gridspec(
+            3,
+            1,
+            height_ratios=[header_height, tree_height, legend_height],
+            hspace=0.05,
+        )
+        ax_header = fig.add_subplot(gs[0])
+        ax_tree = fig.add_subplot(gs[1])
+        ax_legend = fig.add_subplot(gs[2])
     else:
-        ax.set_title(title, fontsize=14, fontweight="bold")
-    ax.axis("off")
+        gs = fig.add_gridspec(
+            2, 1, height_ratios=[header_height, tree_height], hspace=0.05
+        )
+        ax_header = fig.add_subplot(gs[0])
+        ax_tree = fig.add_subplot(gs[1])
+        ax_legend = None
+
+    # Draw header (title + styled text)
+    ax_header.axis("off")
+    ax_header.text(
+        0.5,
+        0.7,
+        title,
+        fontsize=14,
+        fontweight="bold",
+        ha="center",
+        va="center",
+        transform=ax_header.transAxes,
+    )
+    if greedy_parts:
+        _draw_styled_text(ax_header, greedy_parts, y_start=0.4)
+
+    # Draw tree
+    ax_tree.axis("off")
+    _draw_edges(ax_tree, edges)
+    _draw_nodes(ax_tree, nodes, scores, len(structures))
 
     x_range = max(all_x) - min(all_x) if len(set(all_x)) > 1 else 1
     y_range = max(all_y) - min(all_y) if len(set(all_y)) > 1 else 1
-    ax.set_xlim(min(all_x) - 0.5, max(all_x) + x_range * 0.15 + 3)
-    ax.set_ylim(
-        min(all_y) - max(y_range * 0.1, 1.0), max(all_y) + max(y_range * 0.1, 0.5)
-    )
+    ax_tree.set_xlim(min(all_x) - 0.5, max(all_x) + x_range * 0.12 + 2)
+    ax_tree.set_ylim(min(all_y) - 0.8, max(all_y) + 0.5)
 
-    plt.tight_layout()
+    # Draw legend in dedicated area
+    if structures and ax_legend:
+        _draw_legend(ax_legend, structures)
+
     plt.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"  Saved: {path}")
 
 
 def _draw_styled_text(
-    fig, parts: list[tuple[str, str]], max_chars_per_line: int = 100
+    ax,
+    parts: list[tuple[str, str]],
+    y_start: float = 0.5,
+    max_total_chars: int = 200,
 ) -> None:
-    """Draw styled text below the title using multiple text elements, with word wrapping."""
-    # Style definitions for each part type
-    styles = {
-        TEXT_PART_TEMPLATE: {"color": "#999999", "fontsize": 6, "fontweight": "normal"},
-        TEXT_PART_PROMPT: {"color": "#222222", "fontsize": 7, "fontweight": "bold"},
-        TEXT_PART_CONTINUATION: {
-            "color": "#666666",
-            "fontsize": 7,
-            "fontweight": "normal",
-        },
+    """Draw styled text centered in axes, with truncation if needed."""
+    # Colors for each part type
+    colors = {
+        TEXT_PART_TEMPLATE: "#999999",
+        TEXT_PART_PROMPT: "#000000",
+        TEXT_PART_CONTINUATION: "#666666",
     }
 
-    # Escape newlines for display
+    # Escape newlines
     parts = [(text.replace("\n", "↵"), part_type) for text, part_type in parts]
 
-    # Build lines with word wrapping
-    lines = []  # Each line is a list of (text, part_type) tuples
-    current_line = []
-    current_len = 0
-
-    for text, part_type in parts:
-        # Split text into chunks that fit
-        remaining = text
-        while remaining:
-            space_left = max_chars_per_line - current_len
-            if len(remaining) <= space_left:
-                current_line.append((remaining, part_type))
-                current_len += len(remaining)
-                remaining = ""
+    # Truncate if total length exceeds max
+    total_len = sum(len(text) for text, _ in parts)
+    if total_len > max_total_chars:
+        remaining = max_total_chars - 3
+        new_parts = []
+        for text, ptype in parts:
+            if remaining <= 0:
+                break
+            if len(text) <= remaining:
+                new_parts.append((text, ptype))
+                remaining -= len(text)
             else:
-                # Add what fits to current line
-                if space_left > 0:
-                    current_line.append((remaining[:space_left], part_type))
-                # Start new line with rest
-                lines.append(current_line)
-                current_line = []
-                current_len = 0
-                remaining = remaining[space_left:]
+                new_parts.append((text[:remaining] + "...", ptype))
+                break
+        parts = new_parts
 
-    if current_line:
-        lines.append(current_line)
+    # Draw each part with its color, all on one or two lines
+    full_text = "".join(text for text, _ in parts)
 
-    # Limit to 3 lines max
-    if len(lines) > 3:
-        lines = lines[:3]
-        # Add ellipsis to last line
-        if lines[-1]:
-            last_text, last_type = lines[-1][-1]
-            lines[-1][-1] = (last_text + "...", last_type)
+    # Split into 2 lines if too long
+    if len(full_text) > 100:
+        mid = len(full_text) // 2
+        # Try to split at a space or special char
+        for i in range(mid, min(mid + 20, len(full_text))):
+            if full_text[i] in " ↵<>":
+                mid = i
+                break
+        line1, line2 = full_text[:mid], full_text[mid:]
 
-    # Draw each line
-    y_pos = 0.945
-    line_height = 0.018
-
-    for line_parts in lines:
-        # Calculate line width for centering
-        line_len = sum(len(text) for text, _ in line_parts)
-        x_pos = 0.5 - (line_len * 0.0028)  # Rough centering
-        x_pos = max(0.02, x_pos)
-
-        for text, part_type in line_parts:
-            style = styles.get(part_type, styles[TEXT_PART_PROMPT])
-            fig.text(
-                x_pos,
-                y_pos,
-                text,
-                fontfamily="monospace",
-                ha="left",
-                va="top",
-                transform=fig.transFigure,
-                **style,
-            )
-            # Advance position (rough character width estimate based on fontsize)
-            char_width = 0.0056 if style["fontsize"] >= 7 else 0.0048
-            x_pos += len(text) * char_width
-
-        y_pos -= line_height
+        ax.text(
+            0.5,
+            y_start,
+            line1,
+            fontfamily="monospace",
+            fontsize=7,
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            color="#666666",
+        )
+        ax.text(
+            0.5,
+            y_start - 0.35,
+            line2,
+            fontfamily="monospace",
+            fontsize=7,
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            color="#666666",
+        )
+    else:
+        ax.text(
+            0.5,
+            y_start,
+            full_text,
+            fontfamily="monospace",
+            fontsize=7,
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+            color="#666666",
+        )
 
 
 def _layout(
@@ -412,22 +447,52 @@ def _draw_scores(ax, x: float, y: float, node_scores: list[float]) -> None:
 
 
 def _draw_legend(ax, structures: list[str]) -> None:
-    """Draw structure legend."""
-    handles = [
-        (
-            plt.Rectangle((0, 0), 1, 1, fc=COLORS[i % len(COLORS)], ec="black", lw=0.5),
-            s[:30] + "..." if len(s) > 30 else s,
+    """Draw structure legend horizontally centered in its own axes area."""
+    ax.axis("off")
+
+    n = len(structures)
+    if n == 0:
+        return
+
+    # Estimate total width needed (box + label for each structure)
+    labels = [s[:30] + "..." if len(s) > 30 else s for s in structures]
+    # Approximate width: box (0.015) + gap (0.01) + chars * 0.006 + padding (0.03)
+    item_widths = [0.015 + 0.01 + len(label) * 0.006 + 0.03 for label in labels]
+    total_width = sum(item_widths)
+
+    # Start from center-left
+    start_x = 0.5 - total_width / 2
+    x = start_x
+
+    for i, (s, label) in enumerate(zip(structures, labels)):
+        color = COLORS[i % len(COLORS)]
+
+        # Draw colored box
+        ax.add_patch(
+            plt.Rectangle(
+                (x, 0.25),
+                0.015,
+                0.5,
+                fc=color,
+                ec="black",
+                lw=0.5,
+                transform=ax.transAxes,
+                clip_on=False,
+            )
         )
-        for i, s in enumerate(structures)
-    ]
-    ax.legend(
-        [h[0] for h in handles],
-        [h[1] for h in handles],
-        loc="upper left",
-        fontsize=8,
-        framealpha=0.9,
-        title="Structures",
-    )
+
+        # Draw label
+        ax.text(
+            x + 0.02,
+            0.5,
+            label,
+            fontsize=7,
+            ha="left",
+            va="center",
+            transform=ax.transAxes,
+        )
+
+        x += item_widths[i]
 
 
 def _node_color(node: TreeNode, scores: dict, n_structs: int) -> str:

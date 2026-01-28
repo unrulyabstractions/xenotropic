@@ -53,8 +53,20 @@ class TreeNode:
 # -----------------------------------------------------------------------------
 
 
+def has_token_data(trajectories: list[dict]) -> bool:
+    """Check if trajectories have actual token-level data."""
+    for traj in trajectories:
+        if traj.get("per_token_logprobs"):
+            return True
+    return False
+
+
 def build_token_tree(trajectories: list[dict]) -> TreeNode:
-    """Build a tree from token sequences."""
+    """Build a tree from token sequences. Returns None if no token data."""
+    # Check if we have actual token data
+    if not has_token_data(trajectories):
+        return None
+
     root = TreeNode.create_root()
 
     for traj in trajectories:
@@ -62,9 +74,7 @@ def build_token_tree(trajectories: list[dict]) -> TreeNode:
         tokens = traj.get("per_token_logprobs", [])
 
         if not tokens:
-            # Fall back to splitting text if no token info
-            text = traj["text"]
-            tokens = [{"token": c, "logprob": 0} for c in text]
+            continue
 
         current = root
         cumulative = 1.0
@@ -483,15 +493,18 @@ def visualize_results(result_dir: Path, output_dir: Path) -> None:
             min_count=1,
         )
 
-        # Build and plot token tree
+        # Build and plot token tree (only if we have token data)
         token_tree = build_token_tree(trajectories)
-        plot_tree(
-            token_tree,
-            f"Token Tree - {prompt_variant}",
-            output_dir / f"{prompt_variant}_token_tree.png",
-            max_depth=12,
-            min_count=1,
-        )
+        if token_tree is not None:
+            plot_tree(
+                token_tree,
+                f"Token Tree - {prompt_variant}",
+                output_dir / f"{prompt_variant}_token_tree.png",
+                max_depth=12,
+                min_count=1,
+            )
+        else:
+            print("  Skipping token tree (no per-token data available)")
 
 
 # -----------------------------------------------------------------------------

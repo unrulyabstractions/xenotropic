@@ -34,6 +34,9 @@ def visualize_experiment(result_dir: Path, output_dir: Path | None = None) -> No
             continue
 
         scores, structures = _load_scores(result_dir, variant, trajectories)
+        greedy_text = next(
+            (t["text"] for t in trajectories if t.get("is_greedy")), None
+        )
 
         for mode in ["word", "phrase", "token"]:
             tree = build_tree(trajectories, scores, prompt, mode)
@@ -44,6 +47,7 @@ def visualize_experiment(result_dir: Path, output_dir: Path | None = None) -> No
                     output_dir / f"{mode}_tree.png",
                     structures,
                     scores,
+                    greedy_text=greedy_text,
                 )
             elif mode == "token":
                 print("    Skipping token tree (no token data)")
@@ -75,6 +79,7 @@ def plot_tree(
     path: Path,
     structures: list[str],
     scores: dict[str, list[float]],
+    greedy_text: str | None = None,
 ) -> None:
     """Render tree to PNG."""
     _layout(root)
@@ -96,7 +101,16 @@ def plot_tree(
     if structures:
         _draw_legend(ax, structures)
 
-    ax.set_title(title, fontsize=14, fontweight="bold")
+    # Title with greedy text below
+    if greedy_text:
+        ax.set_title(
+            f'{title}\n"{greedy_text}"',
+            fontsize=12,
+            fontweight="bold",
+            fontfamily="monospace",
+        )
+    else:
+        ax.set_title(title, fontsize=14, fontweight="bold")
     ax.axis("off")
 
     x_range = max(all_x) - min(all_x) if len(set(all_x)) > 1 else 1

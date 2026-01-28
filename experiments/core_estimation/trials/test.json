@@ -1,7 +1,7 @@
 {
   "experiment_id" : "story",
   "generation": {
-    "model": "Qwen/Qwen1.5-0.5B-Chat",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
     "base_prompt": "Once upon a time, there was a",
     "branching_points": [],
     "temperature": 1.2,

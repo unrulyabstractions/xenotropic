@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Run experiment: collect trajectories, evaluate with judge, estimate cores.
+"""Run experiment: collect trajectories, evaluate with judge, estimate cores.
 
 Usage: python run_experiment.py [trial] [--no-viz] [--quiet]
 
@@ -13,7 +12,9 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+SCRIPT_DIR = Path(__file__).parent
+sys.path.insert(0, str(SCRIPT_DIR.parent / "src"))
+sys.path.insert(0, str(SCRIPT_DIR.parent.parent.parent))
 
 from experiment import Experiment
 

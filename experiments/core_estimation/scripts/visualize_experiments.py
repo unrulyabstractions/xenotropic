@@ -11,10 +11,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).parent
+sys.path.insert(0, str(SCRIPT_DIR.parent / "src"))
+
 from plot import visualize_experiment
 
-SCRIPT_DIR = Path(__file__).parent
-OUT_DIR = SCRIPT_DIR / "out"
+OUT_DIR = SCRIPT_DIR.parent / "out"
 
 
 def main() -> int:

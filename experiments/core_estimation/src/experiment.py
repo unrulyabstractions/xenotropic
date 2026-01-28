@@ -20,7 +20,7 @@ from schemas import (
     TrajectoryRecord,
 )
 
-SCRIPT_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent  # core_estimation/
 
 
 class Experiment:
@@ -39,9 +39,9 @@ class Experiment:
     @classmethod
     def from_trial(cls, trial_name: str) -> Experiment:
         """Load experiment from trial config file."""
-        trial_path = SCRIPT_DIR / "trials" / f"{trial_name}.json"
+        trial_path = BASE_DIR / "trials" / f"{trial_name}.json"
         if not trial_path.exists():
-            available = [p.stem for p in (SCRIPT_DIR / "trials").glob("*.json")]
+            available = [p.stem for p in (BASE_DIR / "trials").glob("*.json")]
             raise FileNotFoundError(
                 f"Trial '{trial_name}' not found. Available: {available}"
             )
@@ -55,7 +55,7 @@ class Experiment:
             estimation=EstimationConfig(**data["estimation"]),
         )
 
-        return cls(params, SCRIPT_DIR / "out" / trial_name)
+        return cls(params, BASE_DIR / "out" / trial_name)
 
     def run(self, verbose: bool = True, **kwargs) -> None:
         """Run the experiment."""

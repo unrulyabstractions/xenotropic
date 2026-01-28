@@ -22,6 +22,7 @@ class GenerationConfig(SchemaClass):
     top_k: int = 500
     estimation_temperature: float = 0.8
     seed: int = 42
+    max_trajectories: int = 50  # Maximum trajectories to collect
 
 
 @dataclass

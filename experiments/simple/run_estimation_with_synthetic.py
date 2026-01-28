@@ -384,8 +384,8 @@ def get_args() -> argparse.Namespace:
     parser.add_argument(
         "--num-trajectories",
         type=int,
-        default=20,
-        help="Number of synthetic trajectories to generate",
+        default=None,
+        help="Number of synthetic trajectories (default: from config or 20)",
     )
     parser.add_argument(
         "--seed",
@@ -507,6 +507,11 @@ def main() -> int:
     # Load parameters
     params = load_params(args.trial)
 
+    # Determine num_trajectories: CLI > config > default(20)
+    num_trajectories = args.num_trajectories
+    if num_trajectories is None:
+        num_trajectories = params.generation.max_trajectories or 20
+
     # Output directory: experiments/simple/out/{trial_name}_synthetic/
     output_dir = Path(__file__).parent / "out" / f"{args.trial}_synthetic"
 
@@ -517,7 +522,7 @@ def main() -> int:
     # Run experiment
     gen_outputs, est_outputs = run_experiment(
         params=params,
-        num_trajectories=args.num_trajectories,
+        num_trajectories=num_trajectories,
         seed=args.seed,
         verbose=not args.quiet,
     )

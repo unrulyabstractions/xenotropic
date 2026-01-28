@@ -143,6 +143,7 @@ def collect_trajectories(
         top_p=params.generation.top_p,
         target_mass=target_mass,
         max_iterations=max_iterations,
+        max_trajectories=params.generation.max_trajectories,
         seed=params.generation.seed,
     )
 

@@ -39,6 +39,7 @@ class TrajectoryCollectorConfig(SchemaClass):
     top_p: Optional[float] = None
     target_mass: float = 0.95
     max_iterations: int = 500
+    max_trajectories: Optional[int] = None  # None = unlimited
     max_no_progress: int = 20
     seed: int = 42
     # Activation saving options
@@ -215,6 +216,14 @@ class TrajectoryCollector:
             if no_progress_count >= self.config.max_no_progress:
                 stop_reason = "no_progress"
                 logger.info(f"No progress for {no_progress_count} iterations")
+                break
+
+            if (
+                self.config.max_trajectories is not None
+                and len(trajectories) >= self.config.max_trajectories
+            ):
+                stop_reason = "max_trajectories"
+                logger.info(f"Reached max trajectories {len(trajectories)}")
                 break
 
             # Generate one trajectory

@@ -16,7 +16,7 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -37,12 +37,15 @@ class TreeNode:
     label: str
     probability: float  # Conditional probability P(this | parent)
     cumulative_prob: float  # P(root -> this)
-    children: dict[str, TreeNode]  # label -> child node
+    children: dict[str, TreeNode] = field(default_factory=dict)
     count: int = 1  # Number of trajectories through this node
+    # Layout fields (set during layout computation)
+    x: float = 0.0
+    y: float = 0.0
 
     @classmethod
     def create_root(cls) -> TreeNode:
-        return cls(label="<root>", probability=1.0, cumulative_prob=1.0, children={})
+        return cls(label="<root>", probability=1.0, cumulative_prob=1.0)
 
 
 # -----------------------------------------------------------------------------
@@ -78,7 +81,6 @@ def build_token_tree(trajectories: list[dict]) -> TreeNode:
                     label=token,
                     probability=cond_prob,
                     cumulative_prob=cumulative,
-                    children={},
                     count=0,
                 )
 
@@ -114,7 +116,6 @@ def build_word_tree(trajectories: list[dict]) -> TreeNode:
                     label=word,
                     probability=word_prob,
                     cumulative_prob=cumulative,
-                    children={},
                     count=0,
                 )
 
@@ -154,7 +155,6 @@ def build_sentence_tree(trajectories: list[dict], chunk_size: int = 3) -> TreeNo
                     label=chunk,
                     probability=chunk_prob,
                     cumulative_prob=cumulative,
-                    children={},
                     count=0,
                 )
 
@@ -165,44 +165,128 @@ def build_sentence_tree(trajectories: list[dict], chunk_size: int = 3) -> TreeNo
 
 
 # -----------------------------------------------------------------------------
+# Tree Layout Algorithm
+# -----------------------------------------------------------------------------
+
+
+def compute_layout(
+    node: TreeNode,
+    depth: int = 0,
+    y_offset: float = 0,
+    x_spacing: float = 1.0,
+    y_spacing: float = 1.0,
+) -> float:
+    """
+    Compute tree layout using a simple algorithm.
+
+    - X coordinate = depth (horizontal: root left, leaves right)
+    - Y coordinate = computed to avoid overlaps
+
+    Returns the total height used by this subtree.
+    """
+    node.x = depth * x_spacing
+
+    if not node.children:
+        # Leaf node
+        node.y = y_offset
+        return 1.0  # Height of 1 unit
+
+    # Sort children by count (most frequent first, at top)
+    sorted_children = sorted(node.children.values(), key=lambda c: -c.count)
+
+    # Layout children
+    current_y = y_offset
+    total_height = 0
+    child_positions = []
+
+    for child in sorted_children:
+        child_height = compute_layout(
+            child,
+            depth + 1,
+            current_y,
+            x_spacing,
+            y_spacing,
+        )
+        child_positions.append(child.y)
+        current_y += child_height * y_spacing
+        total_height += child_height * y_spacing
+
+    # Center parent at middle of children
+    if child_positions:
+        node.y = (child_positions[0] + child_positions[-1]) / 2
+    else:
+        node.y = y_offset
+
+    return max(total_height / y_spacing, 1.0)
+
+
+def count_leaves(node: TreeNode) -> int:
+    """Count leaf nodes in subtree."""
+    if not node.children:
+        return 1
+    return sum(count_leaves(c) for c in node.children.values())
+
+
+def get_max_depth(node: TreeNode, current: int = 0) -> int:
+    """Get maximum depth of tree."""
+    if not node.children:
+        return current
+    return max(get_max_depth(c, current + 1) for c in node.children.values())
+
+
+def prune_tree(
+    node: TreeNode, max_depth: int, min_count: int, depth: int = 0
+) -> Optional[TreeNode]:
+    """Prune tree to max_depth and min_count."""
+    if depth >= max_depth:
+        return TreeNode(
+            label=node.label,
+            probability=node.probability,
+            cumulative_prob=node.cumulative_prob,
+            children={},
+            count=node.count,
+        )
+
+    pruned_children = {}
+    for label, child in node.children.items():
+        if child.count >= min_count:
+            pruned = prune_tree(child, max_depth, min_count, depth + 1)
+            if pruned:
+                pruned_children[label] = pruned
+
+    return TreeNode(
+        label=node.label,
+        probability=node.probability,
+        cumulative_prob=node.cumulative_prob,
+        children=pruned_children,
+        count=node.count,
+    )
+
+
+# -----------------------------------------------------------------------------
 # Visualization
 # -----------------------------------------------------------------------------
 
 
-def collect_edges(
-    node: TreeNode,
-    parent_pos: Optional[tuple] = None,
-    depth: int = 0,
-    pos_x: float = 0,
-    width: float = 1.0,
-) -> tuple[list, list, list]:
-    """Collect edges, nodes, and labels for plotting."""
-    edges = []
-    nodes = []
-    labels = []
+def collect_tree_data(
+    node: TreeNode, parent_pos: Optional[tuple] = None
+) -> tuple[list, list]:
+    """Collect all edges and nodes for plotting."""
+    edges = []  # (start_pos, end_pos, probability)
+    nodes = []  # (pos, label, probability, count)
 
-    pos = (pos_x, -depth)
+    pos = (node.x, node.y)
     nodes.append((pos, node.label, node.probability, node.count))
 
     if parent_pos is not None:
         edges.append((parent_pos, pos, node.probability))
 
-    if node.children:
-        n_children = len(node.children)
-        child_width = width / max(n_children, 1)
+    for child in node.children.values():
+        child_edges, child_nodes = collect_tree_data(child, pos)
+        edges.extend(child_edges)
+        nodes.extend(child_nodes)
 
-        for i, (label, child) in enumerate(
-            sorted(node.children.items(), key=lambda x: -x[1].count)
-        ):
-            child_x = pos_x - width / 2 + child_width * (i + 0.5)
-            child_edges, child_nodes, child_labels = collect_edges(
-                child, pos, depth + 1, child_x, child_width
-            )
-            edges.extend(child_edges)
-            nodes.extend(child_nodes)
-            labels.extend(child_labels)
-
-    return edges, nodes, labels
+    return edges, nodes
 
 
 def plot_tree(
@@ -212,89 +296,144 @@ def plot_tree(
     max_depth: int = 5,
     min_count: int = 1,
 ) -> None:
-    """Plot a trajectory tree."""
+    """Plot a trajectory tree with horizontal layout."""
 
-    # Prune tree to max_depth and min_count
-    def prune(node: TreeNode, depth: int) -> TreeNode:
-        if depth >= max_depth:
-            return TreeNode(
-                label=node.label,
-                probability=node.probability,
-                cumulative_prob=node.cumulative_prob,
-                children={},
-                count=node.count,
-            )
+    # Prune tree
+    pruned = prune_tree(root, max_depth, min_count)
+    if not pruned:
+        print(f"  No nodes to plot for {title}")
+        return
 
-        pruned_children = {}
-        for label, child in node.children.items():
-            if child.count >= min_count:
-                pruned_children[label] = prune(child, depth + 1)
+    # Count nodes for sizing
+    n_leaves = count_leaves(pruned)
+    tree_depth = get_max_depth(pruned)
 
-        return TreeNode(
-            label=node.label,
-            probability=node.probability,
-            cumulative_prob=node.cumulative_prob,
-            children=pruned_children,
-            count=node.count,
-        )
+    # Compute spacing based on tree size
+    x_spacing = 2.0  # Horizontal spacing between depths
+    y_spacing = 1.0  # Vertical spacing between siblings
 
-    pruned = prune(root, 0)
-    edges, nodes, _ = collect_edges(pruned, width=10.0)
+    # Compute layout
+    compute_layout(pruned, x_spacing=x_spacing, y_spacing=y_spacing)
+
+    # Collect data
+    edges, nodes = collect_tree_data(pruned)
 
     if not nodes:
         print(f"  No nodes to plot for {title}")
         return
 
-    # Create figure
-    fig, ax = plt.subplots(figsize=(14, 10))
+    # Compute figure size based on tree dimensions
+    fig_width = max(10, (tree_depth + 1) * 2.5)
+    fig_height = max(6, n_leaves * 0.6)
 
-    # Draw edges
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    # Get coordinate ranges for proper sizing
+    all_x = [n[0][0] for n in nodes]
+    all_y = [n[0][1] for n in nodes]
+    x_range = max(all_x) - min(all_x) if len(set(all_x)) > 1 else 1
+    y_range = max(all_y) - min(all_y) if len(set(all_y)) > 1 else 1
+
+    # Draw edges with probability labels
     for start, end, prob in edges:
-        # Color by probability (green=high, red=low)
+        # Color by probability
         color = plt.cm.RdYlGn(prob)
-        linewidth = 0.5 + prob * 2
+        linewidth = 0.8 + prob * 2.5
+
+        # Draw edge
         ax.plot(
             [start[0], end[0]],
             [start[1], end[1]],
             color=color,
             linewidth=linewidth,
-            alpha=0.7,
+            alpha=0.8,
+            zorder=1,
+        )
+
+        # Add probability label on edge
+        mid_x = (start[0] + end[0]) / 2
+        mid_y = (start[1] + end[1]) / 2
+
+        # Format probability nicely
+        if prob >= 0.01:
+            prob_text = f"{prob:.2f}"
+        else:
+            prob_text = f"{prob:.1e}"
+
+        # Add white background for readability
+        ax.annotate(
+            prob_text,
+            (mid_x, mid_y),
+            fontsize=7,
+            ha="center",
+            va="center",
+            color="black",
+            fontweight="bold",
+            bbox=dict(
+                boxstyle="round,pad=0.15",
+                facecolor="white",
+                edgecolor="none",
+                alpha=0.8,
+            ),
+            zorder=3,
         )
 
     # Draw nodes
     for pos, label, prob, count in nodes:
         # Size by count
-        size = 100 + count * 50
+        size = 80 + count * 40
         color = plt.cm.RdYlGn(prob)
 
-        ax.scatter([pos[0]], [pos[1]], s=size, c=[color], alpha=0.8, edgecolors="black")
-
-        # Label (truncate if too long)
-        display_label = label[:15] + "..." if len(label) > 15 else label
-        display_label = display_label.replace("\n", "\\n")
-        ax.annotate(
-            display_label,
-            pos,
-            fontsize=7,
-            ha="center",
-            va="bottom",
-            rotation=45,
+        ax.scatter(
+            [pos[0]],
+            [pos[1]],
+            s=size,
+            c=[color],
+            alpha=0.9,
+            edgecolors="black",
+            linewidths=1,
+            zorder=2,
         )
 
-    ax.set_title(title, fontsize=14, fontweight="bold")
-    ax.set_xlabel("Branches")
-    ax.set_ylabel("Depth")
-    ax.set_aspect("equal")
+        # Label (truncate if too long)
+        max_label_len = 20
+        display_label = (
+            label[:max_label_len] + "..." if len(label) > max_label_len else label
+        )
+        display_label = display_label.replace("\n", "\\n")
+
+        # Position label to the right of node
+        ax.annotate(
+            display_label,
+            (pos[0] + 0.15, pos[1]),
+            fontsize=8,
+            ha="left",
+            va="center",
+            fontfamily="monospace",
+            zorder=4,
+        )
+
+    # Title
+    ax.set_title(title, fontsize=14, fontweight="bold", pad=10)
+
+    # Clean up axes
+    ax.set_xlabel("Depth (token position)", fontsize=10)
     ax.axis("off")
+
+    # Add margins
+    x_margin = x_range * 0.15 + 1
+    y_margin = max(y_range * 0.1, 0.5)
+    ax.set_xlim(min(all_x) - 0.5, max(all_x) + x_margin + 2)
+    ax.set_ylim(min(all_y) - y_margin, max(all_y) + y_margin)
 
     # Add colorbar legend
     sm = plt.cm.ScalarMappable(cmap=plt.cm.RdYlGn, norm=plt.Normalize(0, 1))
     sm.set_array([])
-    cbar = plt.colorbar(sm, ax=ax, shrink=0.5)
-    cbar.set_label("Conditional Probability")
+    cbar = plt.colorbar(sm, ax=ax, shrink=0.6, pad=0.02)
+    cbar.set_label("P(token | prefix)", fontsize=9)
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close()
     print(f"  Saved: {output_path}")
 
@@ -324,23 +463,13 @@ def visualize_results(result_dir: Path, output_dir: Path) -> None:
 
         print(f"  {len(trajectories)} trajectories")
 
-        # Build and plot token tree
-        token_tree = build_token_tree(trajectories)
-        plot_tree(
-            token_tree,
-            f"Token Tree - {prompt_variant}",
-            output_dir / f"{prompt_variant}_token_tree.png",
-            max_depth=8,
-            min_count=1,
-        )
-
-        # Build and plot word tree
+        # Build and plot word tree (most useful view)
         word_tree = build_word_tree(trajectories)
         plot_tree(
             word_tree,
             f"Word Tree - {prompt_variant}",
             output_dir / f"{prompt_variant}_word_tree.png",
-            max_depth=6,
+            max_depth=10,
             min_count=1,
         )
 
@@ -348,9 +477,19 @@ def visualize_results(result_dir: Path, output_dir: Path) -> None:
         sentence_tree = build_sentence_tree(trajectories, chunk_size=3)
         plot_tree(
             sentence_tree,
-            f"Sentence Tree - {prompt_variant}",
-            output_dir / f"{prompt_variant}_sentence_tree.png",
-            max_depth=4,
+            f"Phrase Tree - {prompt_variant}",
+            output_dir / f"{prompt_variant}_phrase_tree.png",
+            max_depth=6,
+            min_count=1,
+        )
+
+        # Build and plot token tree
+        token_tree = build_token_tree(trajectories)
+        plot_tree(
+            token_tree,
+            f"Token Tree - {prompt_variant}",
+            output_dir / f"{prompt_variant}_token_tree.png",
+            max_depth=12,
             min_count=1,
         )
 

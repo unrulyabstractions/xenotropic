@@ -7,15 +7,15 @@ This script:
 2. Collects trajectories from the model using sampling
 3. Evaluates each trajectory using judge-based systems
 4. Computes cores and per-trajectory deviances
-5. Outputs results in structured format
+5. Outputs results and visualizations
+
+Usage: python run_experiment.py [trial] [--no-viz]
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -23,13 +23,19 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from schemas import (
     CoreEstimationOutput,
-    EstimationConfig,
-    GenerationConfig,
     GenerationOutput,
     Params,
     StructureResult,
     SystemResult,
     TrajectoryRecord,
+)
+from utils import (
+    build_prompts,
+    clean_output_dir,
+    load_params,
+    print_summary,
+    run_visualization,
+    save_outputs,
 )
 
 from exploration import (
@@ -42,74 +48,8 @@ from exploration import (
 from xenotechnics.structures.judge import JudgeStructure
 
 # -----------------------------------------------------------------------------
-# Helper Functions
+# Trajectory Collection
 # -----------------------------------------------------------------------------
-
-
-def create_system(
-    system_name: str,
-    structures: list[str],
-    model_runner: ModelRunner,
-) -> tuple:
-    """
-    Create a judge-based system for evaluation.
-
-    Args:
-        system_name: Name of system type (vector_system, generalized_system_q1_r1, etc.)
-        structures: List of structure questions
-        model_runner: ModelRunner for the judge
-
-    Returns:
-        Tuple of (system, system_display_name)
-    """
-    from xenotechnics.systems import (
-        JudgeEntropicSystem,
-        JudgeGeneralizedSystem,
-        JudgeVectorSystem,
-    )
-
-    if system_name == "vector_system":
-        system = JudgeVectorSystem(
-            questions=structures,
-            model_runner=model_runner,
-        )
-        return system, "VectorSystem (L2)"
-
-    elif system_name.startswith("generalized_system"):
-        # Parse q and r from name like "generalized_system_q1_r1"
-        parts = system_name.split("_")
-        q = 1.0
-        r = 1.0
-        for part in parts:
-            if part.startswith("q"):
-                q = float(part[1:])
-            elif part.startswith("r"):
-                r = float(part[1:])
-        system = JudgeGeneralizedSystem(
-            questions=structures,
-            model_runner=model_runner,
-            q=q,
-            r=r,
-        )
-        return system, f"GeneralizedSystem (q={q}, r={r})"
-
-    elif system_name.startswith("entropic_system"):
-        # Parse q from name like "entropic_system_q1"
-        parts = system_name.split("_")
-        q = 1.0
-        for part in parts:
-            if part.startswith("q"):
-                q = float(part[1:])
-        system = JudgeEntropicSystem(
-            questions=structures,
-            model_runner=model_runner,
-            q=q,
-            mode="excess",
-        )
-        return system, f"EntropicSystem (q={q})"
-
-    else:
-        raise ValueError(f"Unknown system type: {system_name}")
 
 
 def collect_trajectories(
@@ -121,23 +61,9 @@ def collect_trajectories(
     max_iterations: int = 200,
     verbose: bool = True,
 ) -> GenerationOutput:
-    """
-    Collect trajectories for a single prompt.
-
-    Args:
-        params: Experiment parameters
-        model_runner: ModelRunner for generation
-        prompt_variant: Name of this prompt variant
-        prompt_text: The actual prompt text
-        target_mass: Target probability mass to collect
-        max_iterations: Maximum collection iterations
-        verbose: Print progress
-
-    Returns:
-        GenerationOutput with collected trajectories
-    """
+    """Collect trajectories for a single prompt."""
     config = TrajectoryCollectorConfig(
-        max_new_tokens=10,  # Very short completions for better probability coverage
+        max_new_tokens=10,
         temperature=params.generation.temperature,
         top_k=params.generation.top_k,
         top_p=params.generation.top_p,
@@ -166,10 +92,8 @@ def collect_trajectories(
     if verbose:
         print(f"  Done: {len(result.trajectories)} unique trajectories")
 
-    # Convert to TrajectoryRecord format
-    trajectory_records = []
-    for traj in result.trajectories:
-        record = TrajectoryRecord(
+    trajectory_records = [
+        TrajectoryRecord(
             text=traj.text,
             probability=traj.probability,
             log_probability=traj.log_probability,
@@ -178,9 +102,8 @@ def collect_trajectories(
                 for tok, lp in zip(traj.tokens, traj.per_token_logprobs)
             ],
         )
-        trajectory_records.append(record)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for traj in result.trajectories
+    ]
 
     return GenerationOutput(
         param_id=params.param_id,
@@ -188,11 +111,16 @@ def collect_trajectories(
         prompt_variant=prompt_variant,
         prompt_text=prompt_text,
         model=params.generation.model,
-        timestamp=timestamp,
+        timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"),
         total_mass=result.total_mass,
         num_trajectories=len(trajectory_records),
         trajectories=trajectory_records,
     )
+
+
+# -----------------------------------------------------------------------------
+# Core Estimation
+# -----------------------------------------------------------------------------
 
 
 def estimate_cores(
@@ -201,18 +129,7 @@ def estimate_cores(
     judge_runner: ModelRunner,
     verbose: bool = True,
 ) -> CoreEstimationOutput:
-    """
-    Estimate cores for collected trajectories using CoreEstimator.
-
-    Args:
-        params: Experiment parameters
-        gen_output: Generation output with trajectories
-        judge_runner: ModelRunner for judge evaluation
-        verbose: Print progress
-
-    Returns:
-        CoreEstimationOutput with core estimates
-    """
+    """Estimate cores for collected trajectories."""
     structures = params.estimation.structures
     system_names = params.estimation.systems
 
@@ -221,28 +138,17 @@ def estimate_cores(
         print(f"  Trajectories: {gen_output.num_trajectories}")
         print(f"  Structures: {structures}")
 
-    # Create CoreEstimator
     estimator = CoreEstimator(CoreEstimatorConfig(use_log_space=True))
 
-    # Create scorer factory that wraps JudgeStructure
     def make_scorer(structure: str):
         judge = JudgeStructure(question=structure, model_runner=judge_runner)
-
-        def scorer(text: str) -> float:
-            score, _ = judge.judge(text)
-            return score
-
-        return scorer
+        return lambda text: judge.judge(text)[0]
 
     system_results = []
-
     for system_name in system_names:
-        _, display_name = create_system(system_name, structures, judge_runner)
-
         if verbose:
-            print(f"\n  System: {display_name}")
+            print(f"\n  System: {system_name}")
 
-        # Use CoreEstimator to compute cores
         result = estimator.estimate(
             trajectories=gen_output.trajectories,
             structures=structures,
@@ -250,7 +156,6 @@ def estimate_cores(
             context_prefix=gen_output.prompt_text,
         )
 
-        # Convert to our schema types
         structure_results = []
         for struct_score in result.structures:
             if verbose:
@@ -258,7 +163,6 @@ def estimate_cores(
                     f"    {struct_score.structure[:40]}... "
                     f"Core: {struct_score.core:.4f}, E[d]: {struct_score.expected_deviance:.4f}"
                 )
-
             structure_results.append(
                 StructureResult(
                     structure=struct_score.structure,
@@ -278,12 +182,10 @@ def estimate_cores(
             )
         )
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
     return CoreEstimationOutput(
         param_id=params.param_id,
         experiment_id=params.experiment_id,
-        timestamp=timestamp,
+        timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"),
         judge_model=params.estimation.model,
         prompt_variant=gen_output.prompt_variant,
         prompt_text=gen_output.prompt_text,
@@ -294,30 +196,17 @@ def estimate_cores(
 
 
 # -----------------------------------------------------------------------------
-# Core Logic
+# Main Experiment
 # -----------------------------------------------------------------------------
 
 
 def run_experiment(
     params: Params,
-    output_dir: Path,
     target_mass: float = 0.9,
     max_iterations: int = 200,
     verbose: bool = True,
 ) -> tuple[list[GenerationOutput], list[CoreEstimationOutput]]:
-    """
-    Run full experiment: collect trajectories and estimate cores.
-
-    Args:
-        params: Experiment parameters
-        output_dir: Directory for output files
-        target_mass: Target probability mass to collect
-        max_iterations: Maximum collection iterations
-        verbose: Print progress
-
-    Returns:
-        Tuple of (generation_outputs, estimation_outputs)
-    """
+    """Run full experiment: collect trajectories and estimate cores."""
     print("=" * 70)
     print(f"EXPERIMENT: {params.experiment_id}")
     print("=" * 70)
@@ -326,25 +215,17 @@ def run_experiment(
     print(f"Judge model: {params.estimation.model}")
     print()
 
-    # Build prompts
-    base_prompt = params.generation.base_prompt
-    prompts = {"branch": base_prompt}
-
-    for i, branch in enumerate(params.generation.branching_points):
-        prompts[f"branch_{i}"] = base_prompt + branch
-
+    prompts = build_prompts(params)
     print(f"Prompts ({len(prompts)}):")
     for name, prompt in prompts.items():
         print(f"  {name}: ...{prompt[-50:]}")
     print()
 
-    # Load generation model
+    # Load models
     print("Loading generation model...")
     gen_runner = ModelRunner(params.generation.model)
     print(f"  Device: {gen_runner.device}")
-    print()
 
-    # Load judge model (may be same as generation model)
     if params.estimation.model == params.generation.model:
         print("Using same model for judging")
         judge_runner = gen_runner
@@ -354,29 +235,23 @@ def run_experiment(
         print(f"  Device: {judge_runner.device}")
     print()
 
-    # Collect trajectories for each prompt
+    # Collect and estimate
     gen_outputs = []
     for prompt_name, prompt_text in prompts.items():
         gen_output = collect_trajectories(
-            params=params,
-            model_runner=gen_runner,
-            prompt_variant=prompt_name,
-            prompt_text=prompt_text,
-            target_mass=target_mass,
-            max_iterations=max_iterations,
-            verbose=verbose,
+            params,
+            gen_runner,
+            prompt_name,
+            prompt_text,
+            target_mass,
+            max_iterations,
+            verbose,
         )
         gen_outputs.append(gen_output)
 
-    # Estimate cores for each prompt
     est_outputs = []
     for gen_output in gen_outputs:
-        est_output = estimate_cores(
-            params=params,
-            gen_output=gen_output,
-            judge_runner=judge_runner,
-            verbose=verbose,
-        )
+        est_output = estimate_cores(params, gen_output, judge_runner, verbose)
         est_outputs.append(est_output)
 
     return gen_outputs, est_outputs
@@ -388,19 +263,12 @@ def run_experiment(
 
 
 def get_args() -> argparse.Namespace:
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument(
         "trial",
         nargs="?",
         default="test",
         help="Trial name (without .json) from trials/ directory",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path(__file__).parent.parent.parent / "outputs" / "simple",
-        help="Base output directory",
     )
     parser.add_argument(
         "--target-mass",
@@ -415,6 +283,11 @@ def get_args() -> argparse.Namespace:
         help="Maximum collection iterations",
     )
     parser.add_argument(
+        "--no-viz",
+        action="store_true",
+        help="Skip visualization generation",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Reduce output verbosity",
@@ -422,130 +295,26 @@ def get_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_params(trial_name: str) -> Params:
-    """Load parameters from trial JSON file."""
-    trials_dir = Path(__file__).parent / "trials"
-    trial_path = trials_dir / f"{trial_name}.json"
-
-    if not trial_path.exists():
-        available = [p.stem for p in trials_dir.glob("*.json")]
-        raise FileNotFoundError(
-            f"Trial '{trial_name}' not found. Available: {available}"
-        )
-
-    with open(trial_path) as f:
-        data = json.load(f)
-
-    gen_config = GenerationConfig(**data["generation"])
-    est_config = EstimationConfig(**data["estimation"])
-
-    return Params(
-        experiment_id=data["experiment_id"],
-        generation=gen_config,
-        estimation=est_config,
-    )
-
-
-def clean_output_dir(output_dir: Path) -> None:
-    """Remove all files in output directory."""
-    if output_dir.exists():
-        import shutil
-
-        shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-
-def save_outputs(
-    output_dir: Path,
-    gen_outputs: list[GenerationOutput],
-    est_outputs: list[CoreEstimationOutput],
-) -> None:
-    """Save generation and estimation outputs to JSON files."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for gen_output in gen_outputs:
-        filename = f"gen_{gen_output.prompt_variant}.json"
-        filepath = output_dir / filename
-        with open(filepath, "w") as f:
-            json.dump(asdict(gen_output), f, indent=2)
-        print(f"Saved: {filepath}")
-
-    for est_output in est_outputs:
-        filename = f"est_{est_output.prompt_variant}.json"
-        filepath = output_dir / filename
-        with open(filepath, "w") as f:
-            json.dump(asdict(est_output), f, indent=2)
-        print(f"Saved: {filepath}")
-
-
-def print_summary(
-    gen_outputs: list[GenerationOutput],
-    est_outputs: list[CoreEstimationOutput],
-) -> None:
-    """Print summary of results."""
-    print()
-    print("=" * 70)
-    print("RESULTS SUMMARY")
-    print("=" * 70)
-
-    for gen_output, est_output in zip(gen_outputs, est_outputs):
-        print(f"\nPrompt: {gen_output.prompt_variant}")
-        print(f"  Trajectories: {gen_output.num_trajectories}")
-
-        # Show top trajectories (use log probs for sorting)
-        sorted_trajs = sorted(
-            gen_output.trajectories,
-            key=lambda t: t.log_probability,
-            reverse=True,
-        )
-        print("  Top 3 trajectories:")
-        for i, traj in enumerate(sorted_trajs[:3]):
-            text_preview = traj.text[:50].replace("\n", "\\n")
-            print(f"    {i + 1}. logp={traj.log_probability:.1f}: {text_preview}...")
-
-        # Show core estimates
-        print("  Core estimates:")
-        for sys_result in est_output.systems:
-            print(f"    {sys_result.system}:")
-            for struct_result in sys_result.structures:
-                print(
-                    f"      {struct_result.structure[:30]}... "
-                    f"core={struct_result.core:.3f}, E[d]={struct_result.expected_deviance:.4f}"
-                )
-
-    print()
-    print("=" * 70)
-    print("EXPERIMENT COMPLETE")
-    print("=" * 70)
-
-
 def main() -> int:
     args = get_args()
-
-    # Load parameters
     params = load_params(args.trial)
 
-    # Output directory: experiments/simple/out/{trial_name}/
     output_dir = Path(__file__).parent / "out" / args.trial
-
-    # Clean previous results
     clean_output_dir(output_dir)
     print(f"Output directory: {output_dir}")
 
-    # Run experiment
     gen_outputs, est_outputs = run_experiment(
-        params=params,
-        output_dir=output_dir,
+        params,
         target_mass=args.target_mass,
         max_iterations=args.max_iterations,
         verbose=not args.quiet,
     )
 
-    # Save results
     save_outputs(output_dir, gen_outputs, est_outputs)
+    print_summary(gen_outputs, est_outputs, use_log_probs=True)
 
-    # Print summary
-    print_summary(gen_outputs, est_outputs)
+    if not args.no_viz:
+        run_visualization(output_dir)
 
     return 0
 

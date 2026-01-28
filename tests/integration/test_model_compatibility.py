@@ -15,14 +15,35 @@ from __future__ import annotations
 import pytest
 
 # Models to test - small ones for CI speed
+# These are commonly used models that TransformerLens supports
 MODELS = [
+    # Qwen
     pytest.param("Qwen/Qwen2.5-0.5B", id="qwen-0.5b-base"),
+    pytest.param("Qwen/Qwen2.5-0.5B-Instruct", id="qwen-0.5b-instruct"),
+    # GPT-2 (OpenAI) - classic, well-tested
+    pytest.param("gpt2", id="gpt2"),
+    # Pythia (EleutherAI) - good for research
+    pytest.param("EleutherAI/pythia-70m", id="pythia-70m"),
+    pytest.param("EleutherAI/pythia-160m", id="pythia-160m"),
+    # OPT (Meta)
+    pytest.param("facebook/opt-125m", id="opt-125m"),
+]
+
+# Instruct/chat models only (for judge tests)
+INSTRUCT_MODELS = [
     pytest.param("Qwen/Qwen2.5-0.5B-Instruct", id="qwen-0.5b-instruct"),
 ]
 
 # Smaller subset for quick smoke tests
 SMOKE_MODELS = [
     pytest.param("Qwen/Qwen2.5-0.5B-Instruct", id="qwen-0.5b-instruct"),
+]
+
+# Base models (for generation tests)
+BASE_MODELS = [
+    pytest.param("gpt2", id="gpt2"),
+    pytest.param("EleutherAI/pythia-70m", id="pythia-70m"),
+    pytest.param("facebook/opt-125m", id="opt-125m"),
 ]
 
 
@@ -302,16 +323,89 @@ class TestBaseVsInstructModels:
 
 
 @pytest.mark.slow
+class TestModelFamilies:
+    """Test different model families work correctly."""
+
+    @pytest.mark.parametrize("model_name", BASE_MODELS)
+    def test_base_model_generation(self, model_name):
+        """Test that base models can generate text."""
+        from exploration import (
+            ModelRunner,
+            TrajectoryCollector,
+            TrajectoryCollectorConfig,
+        )
+
+        runner = ModelRunner(model_name)
+        config = TrajectoryCollectorConfig(
+            max_new_tokens=5,
+            temperature=1.0,
+            max_iterations=5,
+        )
+        collector = TrajectoryCollector(runner, config)
+
+        result = collector.collect("The quick brown")
+
+        assert len(result.trajectories) > 0
+        for traj in result.trajectories:
+            assert len(traj.text) > 0
+
+    def test_gpt2_specific(self):
+        """Test GPT-2 specific functionality."""
+        from exploration import ModelRunner
+
+        runner = ModelRunner("gpt2")
+
+        # GPT-2 should have ~50k vocab
+        assert runner.vocab_size == 50257
+
+        # Test generation
+        output = runner.generate(
+            "Hello, my name is", max_new_tokens=10, temperature=0.0
+        )
+        assert len(output) > 0
+
+    def test_pythia_specific(self):
+        """Test Pythia specific functionality."""
+        from exploration import ModelRunner
+
+        runner = ModelRunner("EleutherAI/pythia-70m")
+
+        # Pythia uses GPT-NeoX tokenizer with 50k vocab
+        assert runner.vocab_size == 50304
+
+        # Test generation
+        output = runner.generate(
+            "The capital of France is", max_new_tokens=5, temperature=0.0
+        )
+        assert len(output) > 0
+
+    def test_opt_specific(self):
+        """Test OPT specific functionality."""
+        from exploration import ModelRunner
+
+        runner = ModelRunner("facebook/opt-125m")
+
+        # OPT has ~50k vocab
+        assert runner.vocab_size == 50272
+
+        # Test generation
+        output = runner.generate("Once upon a time", max_new_tokens=10, temperature=0.0)
+        assert len(output) > 0
+
+
+@pytest.mark.slow
 class TestModelSizes:
     """Test with different model sizes (when available)."""
 
     @pytest.mark.parametrize(
         "model_name",
         [
-            pytest.param("Qwen/Qwen2.5-0.5B-Instruct", id="0.5B"),
+            pytest.param("Qwen/Qwen2.5-0.5B-Instruct", id="qwen-0.5B"),
+            pytest.param("EleutherAI/pythia-70m", id="pythia-70m"),
+            pytest.param("EleutherAI/pythia-160m", id="pythia-160m"),
             # Uncomment for larger models (requires more VRAM):
-            # pytest.param("Qwen/Qwen2.5-1.5B-Instruct", id="1.5B"),
-            # pytest.param("Qwen/Qwen2.5-3B-Instruct", id="3B"),
+            # pytest.param("Qwen/Qwen2.5-1.5B-Instruct", id="qwen-1.5B"),
+            # pytest.param("EleutherAI/pythia-410m", id="pythia-410m"),
         ],
     )
     def test_model_size_scaling(self, model_name):

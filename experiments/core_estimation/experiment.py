@@ -9,7 +9,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-import numpy as np
 from schemas import (
     CoreEstimationOutput,
     EstimationConfig,
@@ -190,12 +189,14 @@ class Experiment:
     # -------------------------------------------------------------------------
 
     def _run_synthetic(self, seed: int = 42, verbose: bool = True, **_):
+        from synthetic import SyntheticGenerator, SyntheticScorer
+
         p = self.params
         prompts = self._build_prompts()
         num_traj = p.generation.max_trajectories or 20
 
-        gen = _SyntheticGenerator(seed)
-        scorer = _SyntheticScorer(seed + 1000)
+        gen = SyntheticGenerator(seed)
+        scorer = SyntheticScorer(seed + 1000)
 
         for name, prompt in prompts.items():
             if verbose:
@@ -320,69 +321,3 @@ class Experiment:
             for sys in est.systems:
                 for s in sys.structures:
                     print(f"  {s.structure[:35]:35} core={s.core:.3f}")
-
-
-# -----------------------------------------------------------------------------
-# Synthetic helpers
-# -----------------------------------------------------------------------------
-
-
-class _SyntheticGenerator:
-    """Generates fake trajectories with Zipf-like probability distribution."""
-
-    CONTINUATIONS = [
-        "Beautiful.",
-        "beautiful.",
-        "red.",
-        "Pretty.",
-        "delicate.",
-        "lovely.",
-        "amazing.",
-        "perfect.",
-        "wonderful.",
-        "stunning.",
-    ]
-
-    def __init__(self, seed: int):
-        self.rng = np.random.default_rng(seed)
-
-    def generate(self, prompt: str, n: int) -> tuple[list[TrajectoryRecord], float]:
-        probs = self._zipf_probs(len(self.CONTINUATIONS))
-        n = min(n, len(self.CONTINUATIONS))
-
-        trajectories = []
-        mass = 0.0
-
-        for i in range(n):
-            p = float(probs[i])
-            mass += p
-            trajectories.append(
-                TrajectoryRecord(
-                    text=prompt + self.CONTINUATIONS[i],
-                    probability=p,
-                    log_probability=float(np.log(p + 1e-10)),
-                    per_token_logprobs=[],
-                    is_greedy=(i == 0),
-                )
-            )
-
-        return trajectories, mass
-
-    def _zipf_probs(self, n: int) -> np.ndarray:
-        ranks = np.arange(1, n + 1)
-        probs = 1.0 / (ranks**1.2)
-        probs *= 1 + 0.1 * self.rng.standard_normal(n)
-        probs = np.maximum(probs, 0.001)
-        return probs / probs.sum()
-
-
-class _SyntheticScorer:
-    """Generates deterministic but varied scores based on text+structure hash."""
-
-    def __init__(self, seed: int):
-        self.rng = np.random.default_rng(seed)
-
-    def score(self, text: str, structure: str) -> float:
-        h = hash(text + structure) % 1000
-        base = (h / 1000) * 0.6 + 0.2
-        return float(np.clip(base + self.rng.standard_normal() * 0.1, 0, 1))

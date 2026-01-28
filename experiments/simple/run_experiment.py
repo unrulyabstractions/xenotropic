@@ -445,6 +445,15 @@ def load_params(trial_name: str) -> Params:
     )
 
 
+def clean_output_dir(output_dir: Path) -> None:
+    """Remove all files in output directory."""
+    if output_dir.exists():
+        import shutil
+
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+
 def save_outputs(
     output_dir: Path,
     gen_outputs: list[GenerationOutput],
@@ -454,14 +463,14 @@ def save_outputs(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for gen_output in gen_outputs:
-        filename = f"{gen_output.param_id}_gen_{gen_output.prompt_variant}_{gen_output.timestamp}.json"
+        filename = f"gen_{gen_output.prompt_variant}.json"
         filepath = output_dir / filename
         with open(filepath, "w") as f:
             json.dump(asdict(gen_output), f, indent=2)
         print(f"Saved: {filepath}")
 
     for est_output in est_outputs:
-        filename = f"{est_output.param_id}_est_{est_output.prompt_variant}_{est_output.timestamp}.json"
+        filename = f"est_{est_output.prompt_variant}.json"
         filepath = output_dir / filename
         with open(filepath, "w") as f:
             json.dump(asdict(est_output), f, indent=2)
@@ -515,8 +524,12 @@ def main() -> int:
     # Load parameters
     params = load_params(args.trial)
 
-    # Create output directory
-    output_dir = args.output / params.output_dir_name
+    # Output directory: experiments/simple/out/{trial_name}/
+    output_dir = Path(__file__).parent / "out" / args.trial
+
+    # Clean previous results
+    clean_output_dir(output_dir)
+    print(f"Output directory: {output_dir}")
 
     # Run experiment
     gen_outputs, est_outputs = run_experiment(
@@ -527,7 +540,10 @@ def main() -> int:
         verbose=not args.quiet,
     )
 
-    # Print summary (no saving)
+    # Save results
+    save_outputs(output_dir, gen_outputs, est_outputs)
+
+    # Print summary
     print_summary(gen_outputs, est_outputs)
 
     return 0

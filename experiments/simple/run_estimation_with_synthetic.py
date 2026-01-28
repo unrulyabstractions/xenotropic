@@ -425,6 +425,40 @@ def load_params(trial_name: str) -> Params:
     )
 
 
+def clean_output_dir(output_dir: Path) -> None:
+    """Remove all files in output directory."""
+    if output_dir.exists():
+        import shutil
+
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+
+def save_outputs(
+    output_dir: Path,
+    gen_outputs: list[GenerationOutput],
+    est_outputs: list[CoreEstimationOutput],
+) -> None:
+    """Save generation and estimation outputs to JSON files."""
+    from dataclasses import asdict
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for gen_output in gen_outputs:
+        filename = f"gen_{gen_output.prompt_variant}.json"
+        filepath = output_dir / filename
+        with open(filepath, "w") as f:
+            json.dump(asdict(gen_output), f, indent=2)
+        print(f"Saved: {filepath}")
+
+    for est_output in est_outputs:
+        filename = f"est_{est_output.prompt_variant}.json"
+        filepath = output_dir / filename
+        with open(filepath, "w") as f:
+            json.dump(asdict(est_output), f, indent=2)
+        print(f"Saved: {filepath}")
+
+
 def print_summary(
     gen_outputs: list[GenerationOutput],
     est_outputs: list[CoreEstimationOutput],
@@ -473,6 +507,13 @@ def main() -> int:
     # Load parameters
     params = load_params(args.trial)
 
+    # Output directory: experiments/simple/out/{trial_name}_synthetic/
+    output_dir = Path(__file__).parent / "out" / f"{args.trial}_synthetic"
+
+    # Clean previous results
+    clean_output_dir(output_dir)
+    print(f"Output directory: {output_dir}")
+
     # Run experiment
     gen_outputs, est_outputs = run_experiment(
         params=params,
@@ -480,6 +521,9 @@ def main() -> int:
         seed=args.seed,
         verbose=not args.quiet,
     )
+
+    # Save results
+    save_outputs(output_dir, gen_outputs, est_outputs)
 
     # Print summary
     print_summary(gen_outputs, est_outputs)

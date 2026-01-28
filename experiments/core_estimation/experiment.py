@@ -190,7 +190,6 @@ class Experiment:
     # -------------------------------------------------------------------------
 
     def _run_synthetic(self, seed: int = 42, verbose: bool = True, **_):
-
         p = self.params
         prompts = self._build_prompts()
         num_traj = p.generation.max_trajectories or 20
@@ -305,7 +304,7 @@ class Experiment:
 
     def visualize(self):
         """Generate visualizations."""
-        from visualize_experiment import visualize_results
+        from visualize_experiments import visualize_results
 
         print("\nGenerating visualizations...")
         visualize_results(self.output_dir, self.output_dir / "viz")

@@ -328,10 +328,10 @@ def run_experiment(
 
     # Build prompts
     base_prompt = params.generation.base_prompt
-    prompts = {"base": base_prompt}
+    prompts = {"branch": base_prompt}
 
-    for branch in params.generation.branching_points:
-        prompts[f"branch_{branch}"] = base_prompt + branch
+    for i, branch in enumerate(params.generation.branching_points):
+        prompts[f"branch_{i}"] = base_prompt + branch
 
     print(f"Prompts ({len(prompts)}):")
     for name, prompt in prompts.items():

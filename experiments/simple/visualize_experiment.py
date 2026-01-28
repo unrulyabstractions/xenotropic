@@ -477,8 +477,8 @@ def visualize_results(result_dir: Path, output_dir: Path) -> None:
         word_tree = build_word_tree(trajectories)
         plot_tree(
             word_tree,
-            f"Word Tree - {prompt_variant}",
-            output_dir / f"{prompt_variant}_word_tree.png",
+            "Word Tree",
+            output_dir / "word_tree.png",
             max_depth=10,
             min_count=1,
         )
@@ -487,8 +487,8 @@ def visualize_results(result_dir: Path, output_dir: Path) -> None:
         sentence_tree = build_sentence_tree(trajectories, chunk_size=3)
         plot_tree(
             sentence_tree,
-            f"Phrase Tree - {prompt_variant}",
-            output_dir / f"{prompt_variant}_phrase_tree.png",
+            "Phrase Tree",
+            output_dir / "phrase_tree.png",
             max_depth=6,
             min_count=1,
         )
@@ -498,8 +498,8 @@ def visualize_results(result_dir: Path, output_dir: Path) -> None:
         if token_tree is not None:
             plot_tree(
                 token_tree,
-                f"Token Tree - {prompt_variant}",
-                output_dir / f"{prompt_variant}_token_tree.png",
+                "Token Tree",
+                output_dir / "token_tree.png",
                 max_depth=12,
                 min_count=1,
             )

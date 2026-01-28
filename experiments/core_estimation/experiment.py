@@ -305,7 +305,7 @@ class Experiment:
 
     def visualize(self):
         """Generate visualizations."""
-        from visualize_experiments import visualize_experiment
+        from plot import visualize_experiment
 
         print("\nGenerating visualizations...")
         visualize_experiment(self.output_dir)

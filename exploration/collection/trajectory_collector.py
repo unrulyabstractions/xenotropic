@@ -196,8 +196,11 @@ class TrajectoryCollector:
         seed = seed if seed is not None else self.config.seed
         rng = np.random.default_rng(seed)
 
+        # Apply chat template if model is instruction-tuned
+        formatted_prompt = self.model_runner._apply_chat_template(prompt)
+
         # Tokenize prompt
-        prompt_ids = self.model_runner.tokenize(prompt, prepend_bos=True)
+        prompt_ids = self.model_runner.tokenize(formatted_prompt, prepend_bos=True)
         prompt_len = prompt_ids.shape[1]
 
         # Track seen trajectories
@@ -322,8 +325,11 @@ class TrajectoryCollector:
         seed = seed if seed is not None else self.config.seed
         rng = np.random.default_rng(seed)
 
+        # Apply chat template if model is instruction-tuned
+        formatted_prompt = self.model_runner._apply_chat_template(prompt)
+
         # Tokenize prompt
-        prompt_ids = self.model_runner.tokenize(prompt, prepend_bos=True)
+        prompt_ids = self.model_runner.tokenize(formatted_prompt, prepend_bos=True)
         prompt_len = prompt_ids.shape[1]
 
         # Track seen trajectories

@@ -131,7 +131,8 @@ def plot_tree(
     greedy_parts: list[tuple[str, str]] | None = None,
 ) -> None:
     """Render tree to PNG."""
-    _layout(root)
+    # Use dynamic layout based on tree structure
+    layout_info = _layout_tree(root)
     edges, nodes = _collect(root)
 
     if not nodes:
@@ -139,12 +140,16 @@ def plot_tree(
 
     all_x = [pos[0] for _, pos in nodes]
     all_y = [pos[1] for _, pos in nodes]
-    n_leaves = sum(1 for n, _ in nodes if n.is_leaf())
-    depth = max(all_x) / 2.5 if all_x else 1
+    n_leaves = layout_info["metrics"]["total_leaves"]
+    max_depth = layout_info["metrics"]["max_depth"]
 
-    # Calculate figure dimensions
-    tree_width = max(10, (depth + 1) * 2.5)
-    tree_height = max(4, n_leaves * 0.7)
+    # Dynamic figure dimensions based on actual tree extent
+    x_range = max(all_x) - min(all_x) if all_x else 1
+    y_range = max(all_y) - min(all_y) if all_y else 1
+
+    # Scale figure size to tree dimensions
+    tree_width = max(10, x_range * 1.2 + 4)
+    tree_height = max(4, y_range * 0.9 + 2)
 
     # Add space for header (title + styled text) and legend
     header_height = 1.2 if greedy_parts else 0.6
@@ -289,10 +294,46 @@ def _draw_styled_text(
         )
 
 
+def _compute_tree_metrics(node: TreeNode) -> dict:
+    """Compute tree metrics for dynamic spacing."""
+
+    def _recurse(n, depth):
+        if n.is_leaf():
+            return {
+                "max_depth": depth,
+                "total_leaves": 1,
+                "max_label_len": len(n.label),
+                "nodes_at_depth": {depth: 1},
+            }
+
+        metrics = {
+            "max_depth": depth,
+            "total_leaves": 0,
+            "max_label_len": len(n.label),
+            "nodes_at_depth": {depth: 1},
+        }
+
+        for child in n.children.values():
+            child_metrics = _recurse(child, depth + 1)
+            metrics["max_depth"] = max(metrics["max_depth"], child_metrics["max_depth"])
+            metrics["total_leaves"] += child_metrics["total_leaves"]
+            metrics["max_label_len"] = max(
+                metrics["max_label_len"], child_metrics["max_label_len"]
+            )
+            for d, count in child_metrics["nodes_at_depth"].items():
+                metrics["nodes_at_depth"][d] = (
+                    metrics["nodes_at_depth"].get(d, 0) + count
+                )
+
+        return metrics
+
+    return _recurse(node, 0)
+
+
 def _layout(
-    node: TreeNode, depth: int = 0, y: float = 0, x_sp: float = 3.0, y_sp: float = 1.8
+    node: TreeNode, depth: int = 0, y: float = 0, x_sp: float = 3.5, y_sp: float = 2.0
 ) -> float:
-    """Compute x,y positions. Returns height used."""
+    """Compute x,y positions using dynamic spacing. Returns height used."""
     node.x = depth * x_sp
 
     if node.is_leaf():
@@ -309,6 +350,44 @@ def _layout(
 
     node.y = (positions[0] + positions[-1]) / 2 if positions else y
     return max(len(positions), 1)
+
+
+def _layout_tree(root: TreeNode) -> dict:
+    """Layout tree with dynamic spacing based on tree structure."""
+    metrics = _compute_tree_metrics(root)
+
+    # Calculate dynamic spacing based on tree complexity
+    total_leaves = metrics["total_leaves"]
+    max_depth = metrics["max_depth"]
+    max_nodes_at_level = max(metrics["nodes_at_depth"].values())
+
+    # Base spacing - increased for larger trees
+    base_x_sp = 3.0
+    base_y_sp = 1.5
+
+    # Scale spacing based on tree density
+    # More leaves = need more vertical space
+    y_scale = 1.0 + (total_leaves / 20) * 0.3  # Increase y spacing for more leaves
+    y_scale = min(y_scale, 2.5)  # Cap the scaling
+
+    # More depth = slightly more horizontal space
+    x_scale = 1.0 + (max_depth / 10) * 0.2
+    x_scale = min(x_scale, 1.5)
+
+    # If many nodes at same level, increase y spacing
+    density_factor = 1.0 + (max_nodes_at_level / 10) * 0.4
+    density_factor = min(density_factor, 2.0)
+
+    x_sp = base_x_sp * x_scale
+    y_sp = base_y_sp * y_scale * density_factor
+
+    # Ensure minimum spacing
+    y_sp = max(y_sp, 1.8)
+    x_sp = max(x_sp, 3.0)
+
+    _layout(root, x_sp=x_sp, y_sp=y_sp)
+
+    return {"x_sp": x_sp, "y_sp": y_sp, "metrics": metrics}
 
 
 def _collect(node: TreeNode) -> tuple[list, list]:

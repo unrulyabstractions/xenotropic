@@ -81,7 +81,7 @@ class ModelRunner:
 
         logger.info(f"Loading {self.model_name} on {self.device}...")
 
-        self.model = HookedTransformer.from_pretrained(
+        self.model = HookedTransformer.from_pretrained_no_processing(
             self.model_name,
             device=self.device,
             dtype=self.dtype,

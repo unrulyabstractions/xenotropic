@@ -148,7 +148,8 @@ def plot_tree(
 
     # Add space for header (title + styled text) and legend
     header_height = 1.2 if greedy_parts else 0.6
-    legend_height = 0.8 if structures else 0
+    n_legend_rows = (len(structures) + 3) // 4 if structures else 0  # 4 items per row
+    legend_height = 0.5 + n_legend_rows * 0.3 if structures else 0
     total_height = tree_height + header_height + legend_height
 
     fig = plt.figure(figsize=(tree_width, total_height))
@@ -289,7 +290,7 @@ def _draw_styled_text(
 
 
 def _layout(
-    node: TreeNode, depth: int = 0, y: float = 0, x_sp: float = 2.5, y_sp: float = 1.2
+    node: TreeNode, depth: int = 0, y: float = 0, x_sp: float = 3.0, y_sp: float = 1.8
 ) -> float:
     """Compute x,y positions. Returns height used."""
     node.x = depth * x_sp
@@ -332,9 +333,9 @@ def _draw_edges(ax, edges: list) -> None:
         ax.plot(
             [x1, x2],
             [y1, y2],
-            color="#666",
-            linewidth=0.5 + rel * 4,
-            alpha=0.6,
+            color="#888",
+            linewidth=0.5 + rel * 3,
+            alpha=0.7,
             zorder=1,
         )
 
@@ -342,14 +343,14 @@ def _draw_edges(ax, edges: list) -> None:
             ax.annotate(
                 _fmt_prob(child.prob),
                 ((x1 + x2) / 2, (y1 + y2) / 2),
-                fontsize=7,
+                fontsize=6,
                 ha="center",
                 va="center",
-                color="#333",
+                color="#555",
                 bbox=dict(
-                    boxstyle="round,pad=0.1",
+                    boxstyle="round,pad=0.08",
                     facecolor="white",
-                    alpha=0.7,
+                    alpha=0.85,
                     edgecolor="none",
                 ),
                 zorder=3,
@@ -363,7 +364,7 @@ def _draw_nodes(ax, nodes: list, scores: dict, n_structs: int) -> None:
         ax.scatter(
             [x],
             [y],
-            s=60 + node.count * 30,
+            s=50 + node.count * 25,
             c=[color],
             alpha=0.9,
             edgecolors="black",
@@ -371,10 +372,14 @@ def _draw_nodes(ax, nodes: list, scores: dict, n_structs: int) -> None:
             zorder=2,
         )
 
-        label = node.label[:18] + "..." if len(node.label) > 18 else node.label
+        # Allow longer labels for leaf nodes
+        max_len = 18 if node.is_leaf() else 12
+        label = (
+            node.label[:max_len] + "..." if len(node.label) > max_len else node.label
+        )
         ax.annotate(
             label.replace("\n", "\\n"),
-            (x, y - 0.3),
+            (x, y - 0.25),
             fontsize=8,
             ha="center",
             va="top",
@@ -382,97 +387,94 @@ def _draw_nodes(ax, nodes: list, scores: dict, n_structs: int) -> None:
             zorder=4,
         )
 
-        if node.is_leaf() and node.is_greedy:
-            ax.annotate(
-                "greedy",
-                (x + 0.5, y),
-                fontsize=7,
-                ha="left",
-                va="center",
-                fontfamily="monospace",
-                fontweight="bold",
-                color="#CD7F32",
-                zorder=4,
-            )
+        if node.is_leaf():
+            # Draw scores to the right of node
+            if node.scores:
+                _draw_scores(ax, x, y, node.scores, n_structs)
 
-        if node.is_leaf() and node.scores:
-            _draw_scores(ax, x, y, node.scores)
+            # Draw greedy indicator above the node
+            if node.is_greedy:
+                ax.annotate(
+                    "★",
+                    (x, y + 0.35),
+                    fontsize=10,
+                    ha="center",
+                    va="bottom",
+                    color="#DAA520",
+                    zorder=4,
+                )
 
 
-def _draw_scores(ax, x: float, y: float, node_scores: list[float]) -> None:
-    """Draw score array below node."""
-    score_x = x - len(node_scores) * 0.15
+def _draw_scores(
+    ax, x: float, y: float, node_scores: list[float], n_structs: int
+) -> None:
+    """Draw score indicator below the leaf node label."""
+    n = len(node_scores)
+    if n == 0:
+        return
+
+    # Skip if all scores are near zero
+    if max(node_scores) < 0.01:
+        return
+
+    # Position below the node label
+    score_y = y - 0.55
+    dominant_idx = int(np.argmax(node_scores))
+    dominant_val = node_scores[dominant_idx]
+    color = _darken(COLORS[dominant_idx % len(COLORS)])
+
+    # Always show just the dominant score for clarity
     ax.annotate(
-        "[",
-        (score_x, y - 0.55),
-        fontsize=7,
-        ha="left",
+        f"{dominant_val:.2f}",
+        (x, score_y),
+        fontsize=6,
+        ha="center",
         va="top",
         fontfamily="monospace",
-    )
-    score_x += 0.06
-
-    for i, s in enumerate(node_scores):
-        c = _darken(COLORS[i % len(COLORS)])
-        ax.annotate(
-            f"{s:.2f}",
-            (score_x, y - 0.55),
-            fontsize=7,
-            ha="left",
-            va="top",
-            fontfamily="monospace",
-            color=c,
-            fontweight="bold",
-        )
-        score_x += 0.3
-        if i < len(node_scores) - 1:
-            ax.annotate(
-                ", ",
-                (score_x, y - 0.55),
-                fontsize=7,
-                ha="left",
-                va="top",
-                fontfamily="monospace",
-            )
-            score_x += 0.1
-
-    ax.annotate(
-        "]",
-        (score_x, y - 0.55),
-        fontsize=7,
-        ha="left",
-        va="top",
-        fontfamily="monospace",
+        color=color,
+        fontweight="bold",
+        zorder=4,
     )
 
 
 def _draw_legend(ax, structures: list[str]) -> None:
-    """Draw structure legend horizontally centered in its own axes area."""
+    """Draw structure legend, wrapping to multiple rows if needed."""
     ax.axis("off")
 
     n = len(structures)
     if n == 0:
         return
 
-    # Estimate total width needed (box + label for each structure)
-    labels = [s[:30] + "..." if len(s) > 30 else s for s in structures]
-    # Approximate width: box (0.015) + gap (0.01) + chars * 0.006 + padding (0.03)
-    item_widths = [0.015 + 0.01 + len(label) * 0.006 + 0.03 for label in labels]
-    total_width = sum(item_widths)
+    # Truncate labels - keep more text
+    labels = [s[:28] + "..." if len(s) > 28 else s for s in structures]
 
-    # Start from center-left
-    start_x = 0.5 - total_width / 2
-    x = start_x
+    # Calculate item widths based on label length
+    item_width = 0.22  # Wider to fit longer labels
+    items_per_row = min(n, 4)  # Max 4 items per row
+    n_rows = (n + items_per_row - 1) // items_per_row
+
+    row_height = 0.4
+    start_y = 0.5 + (n_rows - 1) * row_height / 2
 
     for i, (s, label) in enumerate(zip(structures, labels)):
+        row = i // items_per_row
+        col = i % items_per_row
+        items_in_row = min(items_per_row, n - row * items_per_row)
+
+        # Center this row
+        row_width = items_in_row * item_width
+        start_x = 0.5 - row_width / 2
+        x = start_x + col * item_width
+        y = start_y - row * row_height
+
         color = COLORS[i % len(COLORS)]
 
         # Draw colored box
         ax.add_patch(
             plt.Rectangle(
-                (x, 0.25),
-                0.015,
-                0.5,
+                (x, y - 0.1),
+                0.012,
+                0.2,
                 fc=color,
                 ec="black",
                 lw=0.5,
@@ -483,16 +485,14 @@ def _draw_legend(ax, structures: list[str]) -> None:
 
         # Draw label
         ax.text(
-            x + 0.02,
-            0.5,
+            x + 0.018,
+            y,
             label,
             fontsize=7,
             ha="left",
             va="center",
             transform=ax.transAxes,
         )
-
-        x += item_widths[i]
 
 
 def _node_color(node: TreeNode, scores: dict, n_structs: int) -> str:

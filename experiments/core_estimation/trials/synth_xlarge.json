@@ -1,0 +1,14 @@
+{
+  "experiment_id": "synth_xlarge",
+  "generation": {
+    "model": "synthetic",
+    "base_prompt": "The ",
+    "branching_points": [],
+    "max_trajectories": 30
+  },
+  "estimation": {
+    "model": "synthetic",
+    "systems": ["vector_system"],
+    "structures": ["theme1", "theme2", "theme3", "theme4", "theme5", "theme6", "theme7", "theme8"]
+  }
+}

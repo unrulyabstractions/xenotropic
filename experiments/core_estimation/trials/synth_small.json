@@ -1,0 +1,14 @@
+{
+  "experiment_id": "synth_small",
+  "generation": {
+    "model": "synthetic",
+    "base_prompt": "Once upon a time, ",
+    "branching_points": [],
+    "max_trajectories": 4
+  },
+  "estimation": {
+    "model": "synthetic",
+    "systems": ["vector_system"],
+    "structures": ["person", "animal"]
+  }
+}

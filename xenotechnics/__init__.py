@@ -9,38 +9,32 @@ __version__ = "0.1.0"
 
 # Core abstractions
 from .common import (
-    String,
-    AbstractStructure,
-    FunctionalStructure,
-    CompositeStructure,
-    AbstractSystem,
-    AbstractScoreOperator,
     AbstractDifferenceOperator,
+    AbstractScoreOperator,
+    AbstractStructure,
+    AbstractSystem,
+    CompositeStructure,
+    FunctionalStructure,
     Orientation,
+    String,
 )
 
-# Structure implementations
-from .structures import (
-    ClassifierStructure,
-    MultiClassifierStructure,
-    SimilarityStructure,
-    MultiReferenceSimilarityStructure,
-    GrammarStructure,
-    ValidWordsStructure,
-    SentenceStructureStructure,
-    POSPatternStructure,
-    ReadabilityStructure,
+# Dynamics
+from .dynamics import (
+    AbstractDynamics,
+    DynamicsState,
+    LinearDynamics,
 )
 
 # Operator implementations
 from .operators import (
-    L2ScoreOperator,
+    L1DifferenceOperator,
     L1ScoreOperator,
+    L2DifferenceOperator,
+    L2ScoreOperator,
+    LinfDifferenceOperator,
     LinfScoreOperator,
     MeanScoreOperator,
-    L2DifferenceOperator,
-    L1DifferenceOperator,
-    LinfDifferenceOperator,
     # TODO: Implement missing operators
     # RenyiExcessOperator,
     # RenyiDeficitOperator,
@@ -49,12 +43,25 @@ from .operators import (
     # MaxDeficitOperator,
 )
 
+# Structure implementations
+from .structures import (
+    ClassifierStructure,
+    GrammarStructure,
+    MultiClassifierStructure,
+    MultiReferenceSimilarityStructure,
+    POSPatternStructure,
+    ReadabilityStructure,
+    SentenceStructureStructure,
+    SimilarityStructure,
+    ValidWordsStructure,
+)
+
 # System implementations
 from .systems import (
-    VectorSystem,
-    SingletonSystem,
-    ExcessSystem,
     DeficitSystem,
+    ExcessSystem,
+    SingletonSystem,
+    VectorSystem,
 )
 
 # Tree implementations
@@ -67,13 +74,6 @@ from .xenoreproduction import (
     compute_homogenization_metrics,
     score_diversity,
     score_intervention,
-)
-
-# Dynamics
-from .dynamics import (
-    AbstractDynamics,
-    LinearDynamics,
-    DynamicsState,
 )
 
 __all__ = [

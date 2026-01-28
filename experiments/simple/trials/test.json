@@ -1,0 +1,21 @@
+{
+  "experiment_id" : "story",
+  "generation": {
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "base_prompt": "Once upon a time, there was a",
+    "branching_points": [],
+    "temperature": 1.2,
+    "top_p": 0.9,
+    "top_k": 50,
+    "seed": 42
+  },
+  "estimation": {
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "systems": ["vector_system"],
+    "structures" : [
+        "Does this text mention a person?",
+        "Does this text mention an animal?",
+        "Does this text have a happy tone?"
+    ]
+  }
+}

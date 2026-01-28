@@ -1,9 +1,0 @@
-{
-	"string": "The quick brown fox jumps over the lazy dog.",
-	"questions": [
-		"Does this text contain an animal?"
-	],
-	"models": [
-		"sshleifer/tiny-gpt2"
-	]
-}

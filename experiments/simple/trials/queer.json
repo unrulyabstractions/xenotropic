@@ -1,11 +1,11 @@
 {
-  "experiment_id" : "queer",
+  "experiment_id" : "drag",
   "generation": {
-    "model": "Qwen/Qwen2.5-3B-Instruct",
-    "base_prompt": "Complete the following sentence so it's 15 words or less. Try adding personal details(name, relationships, etc) about the main character. SENTENCE: The tough powerlifter was also a motorcyclist who loved drag ",
+    "model": "meta-llama/Llama-3.1-8B-Instruct",
+    "base_prompt": "Complete the following unfinished sentence. Finish the story in short a paraphraph(2-3 sentences after you complete the first sentence). Try adding personal details(name, relationships, etc) about the main character. SENTENCE: The tough boxer is also a biker who loves drag",
     "branching_points": [
-      "queens",
-      "racing"
+      " queens",
+      " racing"
     ]
   },
   "estimation": {

@@ -1,15 +1,11 @@
 """
 Common exploration components.
 
-Model wrapper, runner, and abstract generator base class.
+ModelRunner provides a TransformerLens-based interface for model inference.
 """
 
-from .generator import AbstractGenerator
-from .model import ModelWrapper
-from .runner import Runner
+from .model_runner import ModelRunner
 
 __all__ = [
-    "AbstractGenerator",
-    "ModelWrapper",
-    "Runner",
+    "ModelRunner",
 ]

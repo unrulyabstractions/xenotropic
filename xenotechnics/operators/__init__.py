@@ -7,23 +7,22 @@ Operators are organized by their mathematical foundation:
 - generalized_operators: Escort distributions and power means
 """
 
+from .entropic_operators import (
+    NormalizedEntropy,
+    RelativeEntropy,
+)
 from .vector_operators import (
-    VectorScoreOperator,
-    VectorDifferenceOperator,
-    L2ScoreOperator,
-    L2SquaredScoreOperator,
+    L1DifferenceOperator,
     L1ScoreOperator,
+    L2DifferenceOperator,
+    L2ScoreOperator,
+    L2SquaredDifferenceOperator,
+    L2SquaredScoreOperator,
+    LinfDifferenceOperator,
     LinfScoreOperator,
     MeanScoreOperator,
-    L2DifferenceOperator,
-    L2SquaredDifferenceOperator,
-    L1DifferenceOperator,
-    LinfDifferenceOperator,
-)
-
-from .entropic_operators import (
-    RelativeEntropy,
-    NormalizedEntropy,
+    VectorDifferenceOperator,
+    VectorScoreOperator,
 )
 
 # TODO: Implement generalized_operators module
@@ -35,23 +34,23 @@ from .entropic_operators import (
 
 __all__ = [
     # Vector operator base classes
-    'VectorScoreOperator',
-    'VectorDifferenceOperator',
+    "VectorScoreOperator",
+    "VectorDifferenceOperator",
     # Vector operators
-    'L2ScoreOperator',
-    'L2SquaredScoreOperator',
-    'L1ScoreOperator',
-    'LinfScoreOperator',
-    'MeanScoreOperator',
-    'L2DifferenceOperator',
-    'L2SquaredDifferenceOperator',
-    'L1DifferenceOperator',
-    'LinfDifferenceOperator',
+    "L2ScoreOperator",
+    "L2SquaredScoreOperator",
+    "L1ScoreOperator",
+    "LinfScoreOperator",
+    "MeanScoreOperator",
+    "L2DifferenceOperator",
+    "L2SquaredDifferenceOperator",
+    "L1DifferenceOperator",
+    "LinfDifferenceOperator",
     # Entropic operators
-    'RelativeEntropy',
-    'NormalizedEntropy',
+    "RelativeEntropy",
+    "NormalizedEntropy",
     # Generalized operators (TODO: implement)
-    # 'EscortPowerMeanOperator',
-    # 'MaxExcessOperator',
-    # 'MaxDeficitOperator',
+    # "EscortPowerMeanOperator",
+    # "MaxExcessOperator",
+    # "MaxDeficitOperator",
 ]

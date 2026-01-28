@@ -1,8 +1,0 @@
-{
-  "prompt": "Complete this sentence: The tough boxer is also a biker who loves drag",
-  "continuations": [
-    " racing. He spends his weekends at the track.",
-    " queens and attends pride events regularly."
-  ],
-  "models": ["google/gemma-2-2b-it"]
-}

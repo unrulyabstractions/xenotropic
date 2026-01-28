@@ -1,15 +1,18 @@
 """
 Judge structure using LLM evaluation.
 
-Uses a language model to evaluate strings against a question.
+Uses ModelRunner for simple text generation to evaluate strings.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from ..common import AbstractStructure, String
+
+if TYPE_CHECKING:
+    from exploration.common import ModelRunner
 
 
 class JudgeStructure(AbstractStructure):
@@ -17,7 +20,7 @@ class JudgeStructure(AbstractStructure):
     Structure that uses an LLM to judge string compliance.
 
     Given a question, prompts an LLM to score the string from 0 to 1.
-    Uses GreedyGenerator or CloudGreedyGenerator internally.
+    Uses ModelRunner for efficient generation.
     """
 
     PROMPT_TEMPLATE = """You are a precise evaluator. Answer the following question about the given text with ONLY a single number between 0 and 1, where 0 means "not at all" and 1 means "completely/definitely". Do not include any other text, explanation, or punctuation - just the number.
@@ -31,54 +34,42 @@ Your numeric answer (0-1):"""
     def __init__(
         self,
         question: str,
-        model_name: str,
+        model_runner: Optional[ModelRunner] = None,
+        model_name: Optional[str] = None,
         device: Optional[str] = None,
-        use_cloud: bool = False,
-        use_chat_template: bool = True,
-        isolate: bool = False,
     ):
         """
         Initialize judge structure.
 
         Args:
             question: Question to ask the LLM about the string
-            model_name: Model name to load
+            model_runner: Pre-loaded ModelRunner to share across structures
+            model_name: Model name to load (required if model_runner not provided)
             device: Device to use (auto-detected if None)
-            use_cloud: If True, use CloudGreedyGenerator for HuggingFace Inference API
-            use_chat_template: Whether to use chat template for prompts
-            isolate: If True, run generation in subprocess for memory isolation
         """
         super().__init__(
-            name=f"Judge: {question[:50]}...",
+            name=f"Judge: {question[:50]}{'...' if len(question) > 50 else ''}",
             description=f"LLM judge evaluating: {question}",
         )
 
         self.question = question
-        self.model_name = model_name
-        self.device = device
-        self.use_cloud = use_cloud
-        self.use_chat_template = use_chat_template
-        self.isolate = isolate
-        self._generator = None
+        self._model_runner = model_runner
+        self._model_name = model_name
+        self._device = device
 
     @property
-    def generator(self):
-        """Lazy-load generator."""
-        if self._generator is None:
-            if self.use_cloud:
-                from exploration.generators import CloudGreedyGenerator
+    def model_runner(self) -> ModelRunner:
+        """Lazy-load model runner."""
+        if self._model_runner is None:
+            from exploration.common import ModelRunner
 
-                self._generator = CloudGreedyGenerator(self.model_name)
-            else:
-                from exploration.generators import GreedyGenerator
-
-                self._generator = GreedyGenerator(
-                    model_name=self.model_name,
-                    device=self.device,
-                    use_chat_template=self.use_chat_template,
-                    lazy_load=self.isolate,
-                )
-        return self._generator
+            if self._model_name is None:
+                raise ValueError("Must provide model_runner or model_name")
+            self._model_runner = ModelRunner(
+                model_name=self._model_name,
+                device=self._device,
+            )
+        return self._model_runner
 
     def compliance(self, string: String) -> float:
         """
@@ -91,20 +82,11 @@ Your numeric answer (0-1):"""
             Compliance score in [0, 1]
         """
         text = string.to_text()
-        prompt = self._format_prompt(text)
-
-        if self.use_cloud:
-            response = self._query_cloud(prompt)
-        else:
-            response = self._query_local(prompt)
-
-        return self._parse_score(response)
+        return self.judge(text)[0]
 
     def judge(self, text: str) -> tuple[float, str]:
         """
         Judge a text string directly.
-
-        Convenience method that accepts text instead of String object.
 
         Args:
             text: Text to evaluate
@@ -112,72 +94,18 @@ Your numeric answer (0-1):"""
         Returns:
             Tuple of (score, raw_response)
         """
-        prompt = self._format_prompt(text)
+        prompt = self.PROMPT_TEMPLATE.format(question=self.question, text=text)
 
-        if self.use_cloud:
-            response = self._query_cloud(prompt)
-        else:
-            response = self._query_local(prompt)
+        # Generate response (short, greedy)
+        response = self.model_runner.generate(
+            prompt,
+            max_new_tokens=20,
+            temperature=0.0,
+            apply_chat_template=True,
+        )
 
         score = self._parse_score(response)
         return score, response
-
-    def _format_prompt(self, text: str) -> str:
-        """Format prompt for LLM judge."""
-        return self.PROMPT_TEMPLATE.format(question=self.question, text=text)
-
-    def _query_local(self, prompt: str) -> str:
-        """Query using local GreedyGenerator."""
-        prompt_string = String.from_text(prompt)
-
-        tree = self.generator.run(
-            prompt=prompt_string,
-            max_new_tokens=20,
-            verbose=False,
-            isolate=self.isolate,
-        )
-
-        # Get trajectory text (continuation only)
-        trajectories = tree.get_trajectory_nodes()
-        if trajectories:
-            traj = trajectories[0]
-            full_text = traj.string.to_text()
-
-            # Extract assistant response from chat template if present
-            # Look for common chat template patterns
-            if "<|im_start|>assistant" in full_text:
-                # Qwen/ChatML style: <|im_start|>assistant\n...<|im_end|>
-                match = re.search(
-                    r"<\|im_start\|>assistant\n?(.*?)(?:<\|im_end\|>|$)",
-                    full_text,
-                    re.DOTALL,
-                )
-                response = match.group(1).strip() if match else ""
-            elif "[/INST]" in full_text:
-                # Llama style: [/INST] ...
-                match = re.search(r"\[/INST\]\s*(.*?)(?:</s>|$)", full_text, re.DOTALL)
-                response = match.group(1).strip() if match else ""
-            elif "<|assistant|>" in full_text:
-                # Phi style: <|assistant|>...
-                match = re.search(
-                    r"<\|assistant\|>\s*(.*?)(?:<\|end\|>|$)", full_text, re.DOTALL
-                )
-                response = match.group(1).strip() if match else ""
-            else:
-                # Fallback: extract continuation after prompt
-                response = full_text[len(prompt) :].strip()
-        else:
-            response = ""
-
-        return response
-
-    def _query_cloud(self, prompt: str) -> str:
-        """Query using CloudGreedyGenerator."""
-        try:
-            result = self.generator.generate(prompt, max_new_tokens=20, verbose=False)
-            return result.text.strip()
-        except Exception as e:
-            return f"[Error: {e}]"
 
     def _parse_score(self, response: str) -> float:
         """
@@ -196,8 +124,10 @@ Your numeric answer (0-1):"""
             score = float(response)
             if 0 <= score <= 1:
                 return score
-            if 1 < score <= 100:
+            # Only treat as percentage if it looks like one (integer values > 1)
+            if 1 < score <= 100 and score == int(score):
                 return score / 100
+            # Clamp other values
             return max(0.0, min(1.0, score))
         except ValueError:
             pass
@@ -209,15 +139,19 @@ Your numeric answer (0-1):"""
                 score = float(match.group(1))
                 if 0 <= score <= 1:
                     return score
-                if 1 < score <= 100:
+                # Only treat as percentage if it looks like one (integer values > 1)
+                if 1 < score <= 100 and score == int(score):
                     return score / 100
+                # Clamp other values
                 return max(0.0, min(1.0, score))
             except ValueError:
                 pass
 
         # Strategy 3: Common text patterns
         response_lower = response.lower()
-        if any(w in response_lower for w in ["no", "not", "zero", "none"]):
+        # Use word boundaries to avoid matching "no" in "unknown"
+        words = set(response_lower.split())
+        if words & {"no", "not", "zero", "none", "never"}:
             return 0.0
         if any(
             w in response_lower

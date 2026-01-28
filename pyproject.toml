@@ -73,7 +73,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["xenotechnics*", "exploration*", "wanderings*", "tools*"]
+include = ["xenotechnics*", "exploration*", "experiments*"]
 
 [tool.ruff]
 line-length = 88

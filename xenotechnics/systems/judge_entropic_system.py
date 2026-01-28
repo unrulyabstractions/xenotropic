@@ -6,13 +6,15 @@ Supports excess and deficit modes (Appendix A.2, Equations A.7 and A.8).
 """
 
 from __future__ import annotations
-from typing import List, Optional, Any, Literal, TYPE_CHECKING
 
-from xenotechnics.common import AbstractSystemCompliance, AbstractDifferenceOperator
+from typing import TYPE_CHECKING, List, Literal, Optional
+
+from xenotechnics.common import AbstractDifferenceOperator, AbstractSystemCompliance
+
 from .judge_vector_system import JudgeVectorSystem
 
 if TYPE_CHECKING:
-    from xenotechnics.operators import RelativeEntropy, NormalizedEntropy
+    from exploration.common import ModelRunner
 
 
 class ExcessDifferenceOperator(AbstractDifferenceOperator):
@@ -27,24 +29,16 @@ class ExcessDifferenceOperator(AbstractDifferenceOperator):
 
     def __init__(self, q: float = 2.0):
         from xenotechnics.operators import RelativeEntropy
+
         self.q = q
         self.relative_entropy = RelativeEntropy(q=q)
 
     def __call__(
         self,
         compliance1: AbstractSystemCompliance,
-        compliance2: AbstractSystemCompliance
+        compliance2: AbstractSystemCompliance,
     ) -> float:
-        """
-        Compute excess deviance: H_q(compliance1 || compliance2).
-
-        Args:
-            compliance1: String compliance (Λ_n(y))
-            compliance2: Core compliance (⟨Λ_n⟩)
-
-        Returns:
-            Excess deviance
-        """
+        """Compute excess deviance: H_q(compliance1 || compliance2)."""
         return self.relative_entropy(compliance1, compliance2)
 
 
@@ -60,25 +54,16 @@ class DeficitDifferenceOperator(AbstractDifferenceOperator):
 
     def __init__(self, q: float = 2.0):
         from xenotechnics.operators import RelativeEntropy
+
         self.q = q
         self.relative_entropy = RelativeEntropy(q=q)
 
     def __call__(
         self,
         compliance1: AbstractSystemCompliance,
-        compliance2: AbstractSystemCompliance
+        compliance2: AbstractSystemCompliance,
     ) -> float:
-        """
-        Compute deficit deviance: H_q(compliance2 || compliance1).
-
-        Args:
-            compliance1: String compliance (Λ_n(y))
-            compliance2: Core compliance (⟨Λ_n⟩)
-
-        Returns:
-            Deficit deviance
-        """
-        # Note: arguments are flipped!
+        """Compute deficit deviance: H_q(compliance2 || compliance1)."""
         return self.relative_entropy(compliance2, compliance1)
 
 
@@ -97,8 +82,9 @@ class JudgeEntropicSystem(JudgeVectorSystem):
     def __init__(
         self,
         questions: List[str],
-        model: Optional[Any] = None,
+        model_runner: Optional[ModelRunner] = None,
         model_name: Optional[str] = None,
+        device: Optional[str] = None,
         q: float = 2.0,
         mode: Literal["excess", "deficit"] = "excess",
     ):
@@ -107,8 +93,9 @@ class JudgeEntropicSystem(JudgeVectorSystem):
 
         Args:
             questions: List of questions for LLM judges
-            model: Pre-loaded model (optional)
-            model_name: Model name to load (required if model not provided)
+            model_runner: Pre-loaded ModelRunner to share across structures
+            model_name: Model name to load (required if model_runner not provided)
+            device: Device to use (auto-detected if None)
             q: Order of Rényi entropy (default 2.0)
             mode: "excess" for over-compliance or "deficit" for under-compliance
         """
@@ -125,13 +112,11 @@ class JudgeEntropicSystem(JudgeVectorSystem):
         else:
             raise ValueError(f"Invalid mode: {mode}. Must be 'excess' or 'deficit'")
 
-        # Initialize with Rényi entropy-based operators
-        # We need to call parent's __init__ manually with custom operators
-        # First create the structures by calling JudgeVectorSystem's __init__
         super().__init__(
             questions=questions,
-            model=model,
+            model_runner=model_runner,
             model_name=model_name,
+            device=device,
             score_operator=NormalizedEntropy(q=q),
             difference_operator=difference_op,
         )

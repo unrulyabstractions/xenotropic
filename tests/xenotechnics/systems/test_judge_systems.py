@@ -16,6 +16,18 @@ import pytest
 from xenotechnics.common import String
 
 
+class MockModelRunner:
+    """Mock ModelRunner for testing."""
+
+    def __init__(self, response: str = "0.5"):
+        self.response = response
+
+    def generate(
+        self, prompt, max_new_tokens=20, temperature=0.0, apply_chat_template=True
+    ):
+        return self.response
+
+
 class TestJudgeVectorSystem:
     """Test JudgeVectorSystem class."""
 
@@ -23,55 +35,60 @@ class TestJudgeVectorSystem:
         """Test that empty questions raises error."""
         from xenotechnics.systems.judge_vector_system import JudgeVectorSystem
 
+        mock_runner = MockModelRunner()
         with pytest.raises(ValueError, match="requires at least one question"):
-            JudgeVectorSystem(questions=[], model=MagicMock())
+            JudgeVectorSystem(questions=[], model_runner=mock_runner)
 
     def test_init_requires_model_or_model_name(self):
         """Test that missing model and model_name raises error."""
         from xenotechnics.systems.judge_vector_system import JudgeVectorSystem
 
-        with pytest.raises(ValueError, match="Must provide either model or model_name"):
+        with pytest.raises(ValueError, match="Must provide"):
             JudgeVectorSystem(questions=["Test?"])
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_init_with_model(self, mock_judge_cls):
-        """Test initialization with pre-loaded model."""
+    def test_init_with_model_runner(self):
+        """Test initialization with pre-loaded model runner."""
         from xenotechnics.systems.judge_vector_system import JudgeVectorSystem
 
-        mock_model = MagicMock()
-        mock_judge = MagicMock()
-        mock_judge.compliance.return_value = 0.5
-        mock_judge_cls.return_value = mock_judge
-
+        mock_runner = MockModelRunner()
         questions = ["Is this good?", "Is this valid?"]
-        system = JudgeVectorSystem(questions=questions, model=mock_model)
+        system = JudgeVectorSystem(questions=questions, model_runner=mock_runner)
 
         assert len(system.questions) == 2
         assert len(system.structures) == 2
-        assert mock_judge_cls.call_count == 2
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_init_with_model_name(self, mock_judge_cls):
+    def test_init_with_model_name(self):
         """Test initialization with model name."""
-        from xenotechnics.systems.judge_vector_system import JudgeVectorSystem
+        import sys
 
-        mock_judge = MagicMock()
-        mock_judge.compliance.return_value = 0.5
-        mock_judge_cls.return_value = mock_judge
+        # Mock transformer_lens module
+        mock_module = MagicMock()
+        mock_hooked_transformer = MagicMock()
+        mock_module.HookedTransformer = mock_hooked_transformer
 
-        system = JudgeVectorSystem(questions=["Question 1?"], model_name="test-model")
+        mock_model = MagicMock()
+        mock_model.cfg.n_layers = 12
+        mock_model.cfg.d_model = 768
+        mock_model.cfg.d_vocab = 50257
+        mock_hooked_transformer.from_pretrained.return_value = mock_model
 
-        assert len(system.questions) == 1
+        with patch.dict(sys.modules, {"transformer_lens": mock_module}):
+            from xenotechnics.systems.judge_vector_system import JudgeVectorSystem
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_repr(self, mock_judge_cls):
+            system = JudgeVectorSystem(
+                questions=["Question 1?"], model_name="test-model"
+            )
+
+            assert len(system.questions) == 1
+
+    def test_repr(self):
         """Test string representation."""
         from xenotechnics.systems.judge_vector_system import JudgeVectorSystem
 
-        mock_judge = MagicMock()
-        mock_judge_cls.return_value = mock_judge
-
-        system = JudgeVectorSystem(questions=["Q1?", "Q2?", "Q3?"], model=MagicMock())
+        mock_runner = MockModelRunner()
+        system = JudgeVectorSystem(
+            questions=["Q1?", "Q2?", "Q3?"], model_runner=mock_runner
+        )
 
         assert "3 judges" in repr(system)
 
@@ -79,17 +96,14 @@ class TestJudgeVectorSystem:
 class TestJudgeEntropicSystem:
     """Test JudgeEntropicSystem class."""
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_init_excess_mode(self, mock_judge_cls):
+    def test_init_excess_mode(self):
         """Test initialization in excess mode."""
         from xenotechnics.systems.judge_entropic_system import JudgeEntropicSystem
 
-        mock_judge = MagicMock()
-        mock_judge_cls.return_value = mock_judge
-
+        mock_runner = MockModelRunner()
         system = JudgeEntropicSystem(
             questions=["Test?"],
-            model=MagicMock(),
+            model_runner=mock_runner,
             q=2.0,
             mode="excess",
         )
@@ -97,49 +111,40 @@ class TestJudgeEntropicSystem:
         assert system.mode == "excess"
         assert system.q == 2.0
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_init_deficit_mode(self, mock_judge_cls):
+    def test_init_deficit_mode(self):
         """Test initialization in deficit mode."""
         from xenotechnics.systems.judge_entropic_system import JudgeEntropicSystem
 
-        mock_judge = MagicMock()
-        mock_judge_cls.return_value = mock_judge
-
+        mock_runner = MockModelRunner()
         system = JudgeEntropicSystem(
             questions=["Test?"],
-            model=MagicMock(),
+            model_runner=mock_runner,
             q=2.0,
             mode="deficit",
         )
 
         assert system.mode == "deficit"
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_init_invalid_mode_raises(self, mock_judge_cls):
+    def test_init_invalid_mode_raises(self):
         """Test that invalid mode raises error."""
         from xenotechnics.systems.judge_entropic_system import JudgeEntropicSystem
 
-        mock_judge = MagicMock()
-        mock_judge_cls.return_value = mock_judge
-
+        mock_runner = MockModelRunner()
         with pytest.raises(ValueError, match="Invalid mode"):
             JudgeEntropicSystem(
                 questions=["Test?"],
-                model=MagicMock(),
+                model_runner=mock_runner,
                 mode="invalid",
             )
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_repr_excess(self, mock_judge_cls):
+    def test_repr_excess(self):
         """Test repr for excess mode."""
         from xenotechnics.systems.judge_entropic_system import JudgeEntropicSystem
 
-        mock_judge = MagicMock()
-        mock_judge_cls.return_value = mock_judge
-
+        mock_runner = MockModelRunner()
         system = JudgeEntropicSystem(
             questions=["Q1?", "Q2?"],
-            model=MagicMock(),
+            model_runner=mock_runner,
             q=3.0,
             mode="excess",
         )
@@ -207,19 +212,16 @@ class TestDeficitDifferenceOperator:
 class TestJudgeGeneralizedSystem:
     """Test JudgeGeneralizedSystem class."""
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_init(self, mock_judge_cls):
+    def test_init(self):
         """Test initialization."""
         from xenotechnics.systems.judge_generalized_system import (
             JudgeGeneralizedSystem,
         )
 
-        mock_judge = MagicMock()
-        mock_judge_cls.return_value = mock_judge
-
+        mock_runner = MockModelRunner()
         system = JudgeGeneralizedSystem(
             questions=["Test?"],
-            model=MagicMock(),
+            model_runner=mock_runner,
             q=2.0,
             r=1.5,
         )
@@ -227,37 +229,31 @@ class TestJudgeGeneralizedSystem:
         assert system.q == 2.0
         assert system.r == 1.5
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_compute_core_empty_raises(self, mock_judge_cls):
+    def test_compute_core_empty_raises(self):
         """Test that empty trajectories raises error."""
         from xenotechnics.systems.judge_generalized_system import (
             JudgeGeneralizedSystem,
         )
 
-        mock_judge = MagicMock()
-        mock_judge_cls.return_value = mock_judge
-
+        mock_runner = MockModelRunner()
         system = JudgeGeneralizedSystem(
             questions=["Test?"],
-            model=MagicMock(),
+            model_runner=mock_runner,
         )
 
         with pytest.raises(ValueError, match="empty trajectory"):
             system.compute_core([], np.array([]))
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_compute_core_mismatched_lengths_raises(self, mock_judge_cls):
+    def test_compute_core_mismatched_lengths_raises(self):
         """Test that mismatched lengths raises error."""
         from xenotechnics.systems.judge_generalized_system import (
             JudgeGeneralizedSystem,
         )
 
-        mock_judge = MagicMock()
-        mock_judge_cls.return_value = mock_judge
-
+        mock_runner = MockModelRunner()
         system = JudgeGeneralizedSystem(
             questions=["Test?"],
-            model=MagicMock(),
+            model_runner=mock_runner,
         )
 
         trajectories = [String(tokens=("a",)), String(tokens=("b",))]
@@ -266,21 +262,17 @@ class TestJudgeGeneralizedSystem:
         with pytest.raises(ValueError, match="must match"):
             system.compute_core(trajectories, probs)
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_compute_core_basic(self, mock_judge_cls):
+    def test_compute_core_basic(self):
         """Test basic core computation."""
         from xenotechnics.systems.judge_generalized_system import (
             JudgeGeneralizedSystem,
         )
         from xenotechnics.systems.vector_system import VectorSystemCompliance
 
-        mock_judge = MagicMock()
-        mock_judge.compliance.side_effect = [0.6, 0.4]
-        mock_judge_cls.return_value = mock_judge
-
+        mock_runner = MockModelRunner(response="0.5")
         system = JudgeGeneralizedSystem(
             questions=["Test?"],
-            model=MagicMock(),
+            model_runner=mock_runner,
             q=1.0,
             r=1.0,
         )
@@ -293,20 +285,16 @@ class TestJudgeGeneralizedSystem:
         assert isinstance(result, VectorSystemCompliance)
         assert result.string is None  # Core has no associated string
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_compute_core_q_zero(self, mock_judge_cls):
+    def test_compute_core_q_zero(self):
         """Test core computation with q=0 (geometric mean)."""
         from xenotechnics.systems.judge_generalized_system import (
             JudgeGeneralizedSystem,
         )
 
-        mock_judge = MagicMock()
-        mock_judge.compliance.side_effect = [0.6, 0.4]
-        mock_judge_cls.return_value = mock_judge
-
+        mock_runner = MockModelRunner(response="0.5")
         system = JudgeGeneralizedSystem(
             questions=["Test?"],
-            model=MagicMock(),
+            model_runner=mock_runner,
             q=0.0,
             r=1.0,
         )
@@ -320,19 +308,16 @@ class TestJudgeGeneralizedSystem:
         core = result.to_array()
         assert np.isfinite(core[0])
 
-    @patch("xenotechnics.systems.judge_vector_system.JudgeStructure")
-    def test_repr(self, mock_judge_cls):
+    def test_repr(self):
         """Test string representation."""
         from xenotechnics.systems.judge_generalized_system import (
             JudgeGeneralizedSystem,
         )
 
-        mock_judge = MagicMock()
-        mock_judge_cls.return_value = mock_judge
-
+        mock_runner = MockModelRunner()
         system = JudgeGeneralizedSystem(
             questions=["Q1?", "Q2?"],
-            model=MagicMock(),
+            model_runner=mock_runner,
             q=2.0,
             r=0.5,
         )

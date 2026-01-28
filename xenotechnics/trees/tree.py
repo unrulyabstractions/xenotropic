@@ -520,6 +520,34 @@ class TreeNode:
         """
         return np.exp(self.get_continuation_logprob(prompt_token_count))
 
+    def get_per_token_logprobs(self, prompt_token_count: int) -> List[dict]:
+        """
+        Get per-token log probabilities for the continuation.
+
+        Args:
+            prompt_token_count: Number of prompt tokens (edges from root)
+
+        Returns:
+            List of {token, logprob} dicts for each token after the prompt
+        """
+        # Traverse from this node back to root, collecting (token, logprob) pairs
+        path_data = []
+        current = self
+        while current.parent is not None:
+            token = current.string.tokens[-1]
+            logprob = current.parent.child_logprobs.get(token, -np.inf)
+            path_data.append({"token": token, "logprob": float(logprob)})
+            current = current.parent
+
+        # Reverse to get root → trajectory order
+        path_data.reverse()
+
+        # Return only tokens after the prompt
+        if len(path_data) > prompt_token_count:
+            return path_data[prompt_token_count:]
+        else:
+            return []
+
     def get_conditional_probabilities(
         self, trajectory_nodes: List[TreeNode], prompt: String, normalize: bool = False
     ) -> np.ndarray:

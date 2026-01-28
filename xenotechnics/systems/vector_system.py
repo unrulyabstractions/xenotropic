@@ -7,7 +7,7 @@ enabling efficient mathematical operations.
 
 from __future__ import annotations
 
-from typing import Callable, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional
 
 import numpy as np
 
@@ -22,10 +22,7 @@ from xenotechnics.common import (
 )
 
 if TYPE_CHECKING:
-    from xenotechnics.operators import (
-        VectorScoreOperator,
-        VectorDifferenceOperator,
-    )
+    pass
 
 
 class VectorSystemCompliance(AbstractSystemCompliance):
@@ -93,10 +90,8 @@ class VectorSystem(AbstractSystem):
         """
         # Import operators here to avoid circular import at module level
         from xenotechnics.operators import (
-            VectorScoreOperator,
-            VectorDifferenceOperator,
-            L2SquaredScoreOperator,
             L2SquaredDifferenceOperator,
+            L2SquaredScoreOperator,
         )
 
         if not structures:
@@ -134,7 +129,9 @@ class VectorSystem(AbstractSystem):
 
     def compliance(self, string: String) -> AbstractSystemCompliance:
         """Compute Λ_n(x) = (α_1(x), ..., α_n(x))."""
-        compliance_values = [structure.compliance(string) for structure in self.structures]
+        compliance_values = [
+            structure.compliance(string) for structure in self.structures
+        ]
         compliance_vector = np.array(compliance_values)
 
         return VectorSystemCompliance(

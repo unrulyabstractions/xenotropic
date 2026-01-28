@@ -1,19 +1,43 @@
 """
-Exploration framework for trajectory collection.
+Exploration framework for trajectory collection and analysis.
 
-Provides clean abstractions for running LLM generations and building TreeNodes.
+Provides:
+- ModelRunner: TransformerLens-based model interface
+- TrajectoryCollector: Sampling trajectories with probabilities
+- CoreEstimator: Computing cores and deviances from trajectories
 """
 
-from .common import AbstractGenerator, ModelWrapper, Runner
-from .explorers import BruteSearcher, SearchResult
-from .generators import GreedyGenerator, SamplingGenerator
+from .analysis import (
+    CoreEstimationResult,
+    CoreEstimator,
+    CoreEstimatorConfig,
+    StructureScore,
+    Trajectory,
+)
+from .collection import (
+    CollectedTrajectory,
+    CollectionProgress,
+    CollectionResult,
+    CollectionStats,
+    TrajectoryCollector,
+    TrajectoryCollectorConfig,
+)
+from .common import ModelRunner
 
 __all__ = [
-    "AbstractGenerator",
-    "BruteSearcher",
-    "GreedyGenerator",
-    "ModelWrapper",
-    "Runner",
-    "SamplingGenerator",
-    "SearchResult",
+    # Core
+    "ModelRunner",
+    # Collection
+    "CollectedTrajectory",
+    "CollectionProgress",
+    "CollectionResult",
+    "CollectionStats",
+    "TrajectoryCollector",
+    "TrajectoryCollectorConfig",
+    # Analysis
+    "CoreEstimator",
+    "CoreEstimatorConfig",
+    "CoreEstimationResult",
+    "StructureScore",
+    "Trajectory",
 ]

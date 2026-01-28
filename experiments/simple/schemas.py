@@ -6,7 +6,6 @@ based on their parameter values rather than arbitrary experiment_id strings.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 from xenotechnics.common import SchemaClass
 
@@ -64,9 +63,11 @@ class TrajectoryRecord(SchemaClass):
     """Single trajectory with its probability."""
 
     text: str
-    tokens: list[str]  # Token strings, not IDs
     probability: float
     log_probability: float
+    per_token_logprobs: list[dict] = field(
+        default_factory=list
+    )  # [{token, logprob}, ...] - tokens can be extracted from here
 
 
 @dataclass
@@ -79,7 +80,6 @@ class GenerationOutput(SchemaClass):
     prompt_text: str
     model: str
     timestamp: str
-    min_prob_mass: float
     total_mass: float
     num_trajectories: int
     trajectories: list[TrajectoryRecord]
@@ -119,29 +119,3 @@ class CoreEstimationOutput(SchemaClass):
     num_trajectories: int
     total_mass: float
     systems: list[SystemResult]
-
-
-@dataclass
-class TrajectoryDynamics(SchemaClass):
-    """Dynamics information for a single trajectory."""
-
-    trajectory_idx: int
-    text: str
-    probability: float
-    structure_scores: dict[str, float]  # {structure: score}
-    system_deviances: dict[str, float]  # {system: deviance from core}
-    is_best_for_structure: dict[str, bool]  # {structure: True/False}
-
-
-@dataclass
-class VisualizationOutput(SchemaClass):
-    """Output from visualization generation."""
-
-    param_id: str
-    experiment_id: str
-    timestamp: str
-    prompt_variant: str
-    tree_image_path: str
-    dynamics_image_path: Optional[str] = None
-    description: str = ""
-    llm_analysis: str = ""

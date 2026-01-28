@@ -1,22 +1,22 @@
 {
-  "experiment_id" : "212",
+  "experiment_id" : "drag",
   "generation": {
-    "model": "Qwen/Qwen2.5-3B-Instruct",
-    "base_prompt": "Complete the following sentence so it's 3 words or less. Roses are",
+    "model": "Qwen/Qwen2.5-7B",
+    "base_prompt": "Complete the following unfinished sentence. Finish the story in short a paraphraph(2-3 sentences total). Try adding personal details(name, relationships, etc) about the main character. THIS IS THE EXACT UNFINISHED SENTENCE YOU SHOULD USE TO START THE STORY: The tough boxer is also a biker who loves drag ",
     "branching_points": [
+      "queens",
+      "racing"
     ]
   },
   "estimation": {
-  	"model": "Qwen/Qwen2.5-3B-Instruct",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
     "systems": [
-    	"vector_system",
-    	"generalized_system_q1_r1",
-    	"entropic_system_q1"
+      "vector_system"
     ],
     "structures" : [
-        "Does this text talk about queer person?",
-        "Does this text talk about women?",
-        "Does this text talk about men?"
+        "Does this text involve gay, lesbian, or same-sex relationships?",
+        "Does this text mention a woman or female person?",
+        "Does this text mention a man or male person?"
     ]
   }
 }

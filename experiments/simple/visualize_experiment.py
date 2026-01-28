@@ -71,6 +71,60 @@ class TreeNode:
 # -----------------------------------------------------------------------------
 
 
+def has_token_data(trajectories: list[dict]) -> bool:
+    """Check if trajectories have actual token-level data."""
+    for traj in trajectories:
+        if traj.get("per_token_logprobs"):
+            return True
+    return False
+
+
+def build_token_tree(
+    trajectories: list[dict],
+    trajectory_scores: Optional[dict[str, list[float]]] = None,
+) -> Optional[TreeNode]:
+    """Build a tree from token sequences. Returns None if no token data."""
+    if not has_token_data(trajectories):
+        return None
+
+    root = TreeNode.create_root()
+
+    for traj in trajectories:
+        prob = traj["probability"]
+        text = traj["text"]
+        tokens = traj.get("per_token_logprobs", [])
+
+        if not tokens:
+            continue
+
+        current = root
+
+        for i, tok_info in enumerate(tokens):
+            token = tok_info["token"]
+            logprob = tok_info.get("logprob", 0)
+            cond_prob = np.exp(logprob) if logprob else prob ** (1 / len(tokens))
+            is_last = i == len(tokens) - 1
+
+            if token not in current.children:
+                current.children[token] = TreeNode(
+                    label=token,
+                    probability=cond_prob,
+                    count=0,
+                )
+
+            current.children[token].count += 1
+            current.children[token].probability = cond_prob
+
+            # If this is a leaf node, store structure scores
+            if is_last and trajectory_scores and text in trajectory_scores:
+                current.children[token].structure_scores = trajectory_scores[text]
+                current.children[token].trajectory_text = text
+
+            current = current.children[token]
+
+    return root
+
+
 def build_word_tree(
     trajectories: list[dict],
     trajectory_scores: Optional[dict[str, list[float]]] = None,
@@ -390,7 +444,7 @@ def plot_tree(
             zorder=2,
         )
 
-        # Node label
+        # Node label (below node)
         max_label_len = 18
         display_label = (
             node.label[:max_label_len] + "..."
@@ -399,37 +453,42 @@ def plot_tree(
         )
         display_label = display_label.replace("\n", "\\n")
 
-        label_offset = 0.15
+        # Label below node
+        ax.annotate(
+            display_label,
+            (pos[0], pos[1] - 0.3),
+            fontsize=8,
+            ha="center",
+            va="top",
+            fontfamily="monospace",
+            zorder=4,
+        )
 
-        # For leaf nodes with structure scores, show colored compliance values
+        # For leaf nodes with structure scores, show colored compliance values below label
         if is_leaf and node.structure_scores is not None:
-            # Build colored score text
-            ax.annotate(
-                display_label,
-                (pos[0] + label_offset, pos[1]),
-                fontsize=8,
-                ha="left",
-                va="center",
-                fontfamily="monospace",
-                zorder=4,
-            )
+            # Build score string with colored parts
+            score_y = pos[1] - 0.55
 
-            # Add structure scores as colored text
-            score_x = pos[0] + label_offset + len(display_label) * 0.08 + 0.3
-            score_text = "["
+            # Draw bracket and scores
+            score_parts = []
+            for i, score in enumerate(node.structure_scores):
+                score_parts.append(f"{score:.2f}")
+
+            full_text = "[" + ", ".join(score_parts) + "]"
+
+            # Draw each score with its color
+            # First calculate total width for centering
             ax.annotate(
-                score_text,
-                (score_x, pos[1]),
+                "[",
+                (pos[0] - len(full_text) * 0.03, score_y),
                 fontsize=7,
                 ha="left",
-                va="center",
+                va="top",
                 fontfamily="monospace",
                 zorder=4,
             )
 
-            bracket_width = 0.08
-            score_x += bracket_width
-
+            current_x = pos[0] - len(full_text) * 0.03 + 0.06
             for i, score in enumerate(node.structure_scores):
                 color = PASTEL_COLORS[i % len(PASTEL_COLORS)]
                 # Darken for text readability
@@ -437,38 +496,37 @@ def plot_tree(
                 text_color = f"#{darker[0]:02x}{darker[1]:02x}{darker[2]:02x}"
 
                 score_str = f"{score:.2f}"
-                if i < len(node.structure_scores) - 1:
-                    score_str += ", "
-
                 ax.annotate(
                     score_str,
-                    (score_x, pos[1]),
+                    (current_x, score_y),
                     fontsize=7,
                     ha="left",
-                    va="center",
+                    va="top",
                     fontfamily="monospace",
                     color=text_color,
                     fontweight="bold",
                     zorder=4,
                 )
-                score_x += len(score_str) * 0.065
+                current_x += len(score_str) * 0.06
+
+                if i < len(node.structure_scores) - 1:
+                    ax.annotate(
+                        ", ",
+                        (current_x, score_y),
+                        fontsize=7,
+                        ha="left",
+                        va="top",
+                        fontfamily="monospace",
+                        zorder=4,
+                    )
+                    current_x += 0.12
 
             ax.annotate(
                 "]",
-                (score_x, pos[1]),
+                (current_x, score_y),
                 fontsize=7,
                 ha="left",
-                va="center",
-                fontfamily="monospace",
-                zorder=4,
-            )
-        else:
-            ax.annotate(
-                display_label,
-                (pos[0] + label_offset, pos[1]),
-                fontsize=8,
-                ha="left",
-                va="center",
+                va="top",
                 fontfamily="monospace",
                 zorder=4,
             )
@@ -580,6 +638,20 @@ def visualize_results(result_dir: Path, output_dir: Path) -> None:
             max_depth=6,
             min_count=1,
         )
+
+        # Build and plot token tree (only if we have token data)
+        token_tree = build_token_tree(trajectories, trajectory_scores)
+        if token_tree is not None:
+            plot_tree(
+                token_tree,
+                "Token Tree",
+                output_dir / "token_tree.png",
+                structures=structures,
+                max_depth=15,
+                min_count=1,
+            )
+        else:
+            print("  Skipping token tree (no per-token data available)")
 
 
 # -----------------------------------------------------------------------------

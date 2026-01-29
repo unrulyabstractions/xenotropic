@@ -47,7 +47,7 @@ def visualize_experiment(result_dir: Path, output_dir: Path | None = None) -> No
             greedy_parts = _build_text_parts(prompt, formatted_prompt, continuation)
 
         for mode in ["word", "phrase", "token"]:
-            tree = build_tree(trajectories, scores, prompt, mode)
+            tree = build_tree(trajectories, scores, formatted_prompt, mode)
             if tree:
                 plot_tree(
                     tree,
@@ -74,9 +74,13 @@ def _load_scores(
         if est.get("systems"):
             sys_data = est["systems"][0]
             structures = [s["structure"] for s in sys_data["structures"]]
+            num_scores = len(sys_data["structures"][0]["scores"]) if structures else 0
             for i, t in enumerate(trajectories):
-                scores[t["text"]] = [s["scores"][i] for s in sys_data["structures"]]
-        print(f"    {len(structures)} structures")
+                if i < num_scores:
+                    scores[t["text"]] = [s["scores"][i] for s in sys_data["structures"]]
+        print(
+            f"    {len(structures)} structures, {len(scores)}/{len(trajectories)} scored"
+        )
 
     return scores, structures
 
@@ -149,25 +153,28 @@ def plot_tree(
     tree_width = max(10, x_range * 1.2 + 4)
     tree_height = max(4, y_range * 0.9 + 2)
 
-    # Add space for header (title + styled text) and legend
+    # Add space for header (title + styled text)
     header_height = 1.2 if greedy_parts else 0.6
-    n_legend_rows = (len(structures) + 3) // 4 if structures else 0  # 4 items per row
-    legend_height = 0.5 + n_legend_rows * 0.3 if structures else 0
-    total_height = tree_height + header_height + legend_height
+    # Legend on the right side
+    legend_width = 3.0 if structures else 0
+    total_width = tree_width + legend_width
+    total_height = tree_height + header_height
 
-    fig = plt.figure(figsize=(tree_width, total_height))
+    fig = plt.figure(figsize=(total_width, total_height))
 
-    # Create grid: header at top, tree in middle, legend at bottom
+    # Create grid: header spans top, tree + legend on bottom row
     if structures:
         gs = fig.add_gridspec(
-            3,
-            1,
-            height_ratios=[header_height, tree_height, legend_height],
+            2,
+            2,
+            height_ratios=[header_height, tree_height],
+            width_ratios=[tree_width, legend_width],
             hspace=0.05,
+            wspace=0.02,
         )
-        ax_header = fig.add_subplot(gs[0])
-        ax_tree = fig.add_subplot(gs[1])
-        ax_legend = fig.add_subplot(gs[2])
+        ax_header = fig.add_subplot(gs[0, :])
+        ax_tree = fig.add_subplot(gs[1, 0])
+        ax_legend = fig.add_subplot(gs[1, 1])
     else:
         gs = fig.add_gridspec(
             2, 1, height_ratios=[header_height, tree_height], hspace=0.05
@@ -220,74 +227,54 @@ def _draw_styled_text(
     ax,
     parts: list[tuple[str, str]],
     y_start: float = 0.5,
-    max_total_chars: int = 200,
 ) -> None:
-    """Draw styled text centered in axes, with truncation if needed."""
+    """Draw styled text on two lines: prompt (grey) and continuation (bold)."""
     # Escape newlines
     parts = [(text.replace("\n", "↵"), part_type) for text, part_type in parts]
 
-    # Truncate if total length exceeds max
-    total_len = sum(len(text) for text, _ in parts)
-    if total_len > max_total_chars:
-        remaining = max_total_chars - 3
-        new_parts = []
-        for text, ptype in parts:
-            if remaining <= 0:
-                break
-            if len(text) <= remaining:
-                new_parts.append((text, ptype))
-                remaining -= len(text)
-            else:
-                new_parts.append((text[:remaining] + "...", ptype))
-                break
-        parts = new_parts
+    # Separate prompt (template + prompt) from continuation
+    prompt_text = "".join(
+        text for text, ptype in parts if ptype != TEXT_PART_CONTINUATION
+    )
+    continuation_text = "".join(
+        text for text, ptype in parts if ptype == TEXT_PART_CONTINUATION
+    )
 
-    # Draw each part with its color, all on one or two lines
-    full_text = "".join(text for text, _ in parts)
+    # Scale font sizes based on text length
+    def calc_fontsize(text: str, base: float, base_chars: int) -> float:
+        return max(5, min(base, base * base_chars / max(len(text), 1)))
 
-    # Split into 2 lines if too long
-    if len(full_text) > 100:
-        mid = len(full_text) // 2
-        # Try to split at a space or special char
-        for i in range(mid, min(mid + 20, len(full_text))):
-            if full_text[i] in " ↵<>":
-                mid = i
-                break
-        line1, line2 = full_text[:mid], full_text[mid:]
+    prompt_fontsize = calc_fontsize(prompt_text, 9, 120)
+    continuation_fontsize = calc_fontsize(continuation_text, 11, 80)
 
+    # Draw prompt line (grey, lighter)
+    if prompt_text:
         ax.text(
             0.5,
             y_start,
-            line1,
+            prompt_text,
             fontfamily="monospace",
-            fontsize=7,
+            fontsize=prompt_fontsize,
             ha="center",
             va="center",
             transform=ax.transAxes,
-            color="#666666",
+            color="#999999",
+            alpha=0.7,
         )
+
+    # Draw continuation line (bold, darker)
+    if continuation_text:
         ax.text(
             0.5,
-            y_start - 0.35,
-            line2,
+            y_start - 0.4,
+            continuation_text,
             fontfamily="monospace",
-            fontsize=7,
+            fontsize=continuation_fontsize,
+            fontweight="bold",
             ha="center",
             va="center",
             transform=ax.transAxes,
-            color="#666666",
-        )
-    else:
-        ax.text(
-            0.5,
-            y_start,
-            full_text,
-            fontfamily="monospace",
-            fontsize=7,
-            ha="center",
-            va="center",
-            transform=ax.transAxes,
-            color="#666666",
+            color="#333333",
         )
 
 
@@ -498,30 +485,39 @@ def _draw_nodes(
             zorder=2,
         )
 
-        # Truncate label
-        max_len = 20 if node.is_leaf() else 14
-        label = (
-            node.label[:max_len] + "..." if len(node.label) > max_len else node.label
-        )
-        label = label.replace("\n", "↵")
+        # Show full label with proportional font size
+        label = node.label.replace("\n", "↵")
+        label_len = len(label)
 
+        # For very long labels, wrap into multiple lines and left-align
+        if label_len > 60:
+            wrap_width = 40
+            lines = [label[i : i + wrap_width] for i in range(0, label_len, wrap_width)]
+            label = "\n".join(lines)
+            label_fontsize = max(4, min(6, 6 * 80 / label_len))
+            h_align = "left"
+            label_x_pos = x
+        else:
+            # Scale font: base 9 for ~15 chars, scale down for longer
+            label_fontsize = max(5, min(9, 9 * 15 / max(label_len, 1)))
+            h_align = "center"
+            label_x_pos = x
+
+        # Label BELOW node
+        ax.annotate(
+            label,
+            (label_x_pos, y - node_radius - 0.1),
+            fontsize=label_fontsize,
+            ha=h_align,
+            va="top",
+            fontfamily="monospace",
+            zorder=4,
+            linespacing=1.2,
+        )
+
+        label_x = x + node_radius + 0.1
         if node.is_leaf():
             # Leaf: label to the RIGHT of node (no outgoing edges to cross)
-            label_x = x + node_radius + 0.1
-            ax.annotate(
-                label,
-                (label_x, y),
-                fontsize=8,
-                ha="left",
-                va="center",
-                fontfamily="monospace",
-                zorder=4,
-            )
-
-            # Structure name below label
-            if node.scores and structures:
-                _draw_structure_tag(ax, label_x, y, node.scores, structures)
-
             # Greedy star above the node
             if node.is_greedy:
                 ax.annotate(
@@ -533,95 +529,65 @@ def _draw_nodes(
                     color="#DAA520",
                     zorder=4,
                 )
-        else:
-            # Internal node: label BELOW (edges go right to children)
-            ax.annotate(
-                label,
-                (x, y - node_radius - 0.1),
-                fontsize=8,
-                ha="center",
-                va="top",
-                fontfamily="monospace",
-                zorder=4,
-            )
+            # Structure name below label
+            if node.scores and structures:
+                _draw_structure_tag(ax, label_x, y, node.scores, structures)
 
 
 def _draw_structure_tag(
     ax, label_x: float, y: float, node_scores: list[float], structures: list[str]
 ) -> None:
-    """Draw structure name tag below the leaf node label."""
+    """Draw structure scores as colored values in a vertical column."""
     if not node_scores or not structures:
         return
 
-    # Skip if all scores are near zero (no clear structure)
-    if max(node_scores) < 0.01:
-        return
+    # Position to the right of the node
+    tag_x = label_x + 0.8
+    line_height = 0.18
 
-    # Find dominant structure
-    dominant_idx = int(np.argmax(node_scores))
-    dominant_score = node_scores[dominant_idx]
-    structure_name = structures[dominant_idx] if dominant_idx < len(structures) else "?"
+    # Draw each score in its structure's color, stacked vertically
+    for i, score in enumerate(node_scores):
+        if i >= len(structures):
+            break
+        color = _darken(COLORS[i % len(COLORS)])
+        tag_y = y - i * line_height
 
-    # Truncate long structure names
-    if len(structure_name) > 12:
-        structure_name = structure_name[:10] + ".."
-
-    # Position below the label
-    tag_y = y - 0.25
-    color = _darken(COLORS[dominant_idx % len(COLORS)])
-
-    # Show [structure_name] with score
-    ax.annotate(
-        f"[{structure_name}] {dominant_score:.2f}",
-        (label_x, tag_y),
-        fontsize=6,
-        ha="left",
-        va="top",
-        fontfamily="monospace",
-        color=color,
-        fontweight="bold",
-        zorder=4,
-    )
+        ax.annotate(
+            f"{score:.2f}",
+            (tag_x, tag_y),
+            fontsize=6,
+            ha="left",
+            va="center",
+            fontfamily="monospace",
+            color=color,
+            fontweight="bold",
+            zorder=4,
+        )
 
 
 def _draw_legend(ax, structures: list[str]) -> None:
-    """Draw structure legend, wrapping to multiple rows if needed."""
+    """Draw structure legend vertically on the right side with full labels."""
     ax.axis("off")
 
     n = len(structures)
     if n == 0:
         return
 
-    # Truncate labels - keep more text
-    labels = [s[:28] + "..." if len(s) > 28 else s for s in structures]
+    # Vertical layout: one item per row, top-aligned
+    item_height = 1.0 / max(n + 1, 2)
+    start_y = 1.0 - item_height
 
-    # Calculate item widths based on label length
-    item_width = 0.22  # Wider to fit longer labels
-    items_per_row = min(n, 4)  # Max 4 items per row
-    n_rows = (n + items_per_row - 1) // items_per_row
-
-    row_height = 0.4
-    start_y = 0.5 + (n_rows - 1) * row_height / 2
-
-    for i, (_s, label) in enumerate(zip(structures, labels)):
-        row = i // items_per_row
-        col = i % items_per_row
-        items_in_row = min(items_per_row, n - row * items_per_row)
-
-        # Center this row
-        row_width = items_in_row * item_width
-        start_x = 0.5 - row_width / 2
-        x = start_x + col * item_width
-        y = start_y - row * row_height
-
+    for i, structure in enumerate(structures):
+        x = 0.05
+        y = start_y - i * item_height
         color = COLORS[i % len(COLORS)]
 
         # Draw colored box
         ax.add_patch(
             plt.Rectangle(
-                (x, y - 0.1),
-                0.012,
-                0.2,
+                (x, y - 0.015),
+                0.04,
+                0.03,
                 fc=color,
                 ec="black",
                 lw=0.5,
@@ -630,11 +596,11 @@ def _draw_legend(ax, structures: list[str]) -> None:
             )
         )
 
-        # Draw label
+        # Draw full label
         ax.text(
-            x + 0.018,
+            x + 0.06,
             y,
-            label,
+            structure,
             fontsize=7,
             ha="left",
             va="center",

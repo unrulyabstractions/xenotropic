@@ -38,7 +38,6 @@ def visualize_experiment(
         trajectories = data["trajectories"]
         prompt = data.get("prompt_text", "<root>")
         formatted_prompt = data.get("formatted_prompt", prompt)
-        continuation = data.get("continuation", "")
         model = data.get("model", "unknown")
         model_short = model.rsplit("/", 1)[-1]
         branch_name = branch_dir.name
@@ -56,15 +55,11 @@ def visualize_experiment(
 
         scores, structures = _load_scores(branch_dir, trajectories)
         greedy_traj = next((t for t in trajectories if t.get("is_greedy")), None)
-        # Build text parts for styled rendering
-        # Full generation prefix = formatted_prompt + continuation
-        full_prefix = formatted_prompt + continuation
+        full_prefix = formatted_prompt
         greedy_parts = None
         if greedy_traj:
             greedy_text = greedy_traj["text"]
-            greedy_parts = _build_text_parts(
-                prompt, formatted_prompt, continuation + greedy_text
-            )
+            greedy_parts = _build_text_parts(prompt, formatted_prompt, greedy_text)
 
         viz_dir = branch_dir / "viz"
         viz_dir.mkdir(parents=True, exist_ok=True)
@@ -403,11 +398,17 @@ def _layout_tree(root: TreeNode, has_scores: bool = False) -> dict:
     metrics = _compute_tree_metrics(root)
     max_label_len = metrics["max_label_len"]
     total_leaves = metrics["total_leaves"]
+    max_depth = metrics["max_depth"]
 
     # Horizontal spacing based on label length (chars -> plot units)
     # ~8 chars per unit at fontsize 8 monospace
     label_width = min(max_label_len, 18) * 0.12
     x_sp = max(3.0, label_width + 1.5)
+
+    # Cap total width to avoid enormous images (e.g. token trees with 100+ levels)
+    max_width_units = 300
+    if max_depth > 0 and x_sp * max_depth > max_width_units:
+        x_sp = max_width_units / max_depth
 
     # Minimum vertical gap between nodes
     # Larger trees need proportionally more gap to stay readable
@@ -566,24 +567,23 @@ def _draw_nodes(
 def _draw_structure_tag(
     ax, label_x: float, y: float, node_scores: list[float], structures: list[str]
 ) -> None:
-    """Draw structure scores as colored values in a vertical column."""
+    """Draw structure scores as colored values in a horizontal row."""
     if not node_scores or not structures:
         return
 
     # Position to the right of the node
     tag_x = label_x + 0.8
-    line_height = 0.18
+    col_width = 0.55
 
-    # Draw each score in its structure's color, stacked vertically
+    # Draw each score in its structure's color, laid out horizontally
     for i, score in enumerate(node_scores):
         if i >= len(structures):
             break
         color = _darken(COLORS[i % len(COLORS)])
-        tag_y = y - i * line_height
 
         ax.annotate(
             f"{score:.2f}",
-            (tag_x, tag_y),
+            (tag_x + i * col_width, y),
             fontsize=6,
             ha="left",
             va="center",

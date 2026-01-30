@@ -1,8 +1,7 @@
 """
-ModelRunner for TransformerLens-based inference.
+ModelRunner for HuggingFace Transformers-based inference.
 
 Provides a clean interface for model loading, generation, and activation capture.
-Follows patterns from temporal-awareness but simplified for TransformerLens only.
 
 Example:
     runner = ModelRunner("Qwen/Qwen2.5-0.5B-Instruct")
@@ -18,13 +17,14 @@ import logging
 from typing import Any, Callable, Optional
 
 import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
 
 class ModelRunner:
     """
-    Model runner for TransformerLens-based inference.
+    Model runner for HuggingFace Transformers-based inference.
 
     Provides:
     - Model loading with automatic device/dtype detection
@@ -76,37 +76,64 @@ class ModelRunner:
         )
 
     def _load_model(self) -> None:
-        """Load model using TransformerLens."""
-        from transformer_lens import HookedTransformer
-
+        """Load model using HuggingFace Transformers."""
         logger.info(f"Loading {self.model_name} on {self.device}...")
 
-        self.model = HookedTransformer.from_pretrained_no_processing(
-            self.model_name,
-            device=self.device,
-            dtype=self.dtype,
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self.model_name, trust_remote_code=True
         )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.model_name,
+            torch_dtype=self.dtype,
+            trust_remote_code=True,
+        )
+        self.model.to(self.device)
         self.model.eval()
+
+        # Ensure pad token is set
+        if self._tokenizer.pad_token is None:
+            self._tokenizer.pad_token = self._tokenizer.eos_token
 
     def _detect_chat_model(self) -> bool:
         """Detect if model is instruction-tuned."""
         name = self.model_name.lower()
+        # Explicit non-chat indicators (check first)
+        base_indicators = ["-base", "_base"]
+        if any(indicator in name for indicator in base_indicators):
+            return False
+        # Explicit chat indicators
         chat_indicators = ["instruct", "chat", "-it", "rlhf"]
-        return any(indicator in name for indicator in chat_indicators)
+        if any(indicator in name for indicator in chat_indicators):
+            return True
+        # Qwen3 models (without -Base) are instruct by default
+        if "qwen3" in name:
+            return True
+        return False
 
     def _apply_chat_template(self, prompt: str) -> str:
         """Apply chat template if model is instruction-tuned."""
         if not self._is_chat_model:
             return prompt
 
-        tokenizer = self.tokenizer
-        if hasattr(tokenizer, "apply_chat_template"):
+        if hasattr(self._tokenizer, "apply_chat_template"):
             try:
-                return tokenizer.apply_chat_template(
+                # Try with enable_thinking=False first (Qwen3 etc.)
+                return self._tokenizer.apply_chat_template(
                     [{"role": "user", "content": prompt}],
                     tokenize=False,
                     add_generation_prompt=True,
+                    enable_thinking=False,
                 )
+            except TypeError:
+                # Fallback for tokenizers that don't support enable_thinking
+                try:
+                    return self._tokenizer.apply_chat_template(
+                        [{"role": "user", "content": prompt}],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -116,40 +143,47 @@ class ModelRunner:
     @property
     def tokenizer(self):
         """Get the tokenizer."""
-        return self.model.tokenizer
+        return self._tokenizer
 
     @property
     def n_layers(self) -> int:
         """Get number of layers."""
-        return self.model.cfg.n_layers
+        return self.model.config.num_hidden_layers
 
     @property
     def d_model(self) -> int:
         """Get model dimension."""
-        return self.model.cfg.d_model
+        return self.model.config.hidden_size
 
     @property
     def vocab_size(self) -> int:
         """Get vocabulary size."""
-        return self.model.cfg.d_vocab
+        return self.model.config.vocab_size
 
     @property
     def eos_token_id(self) -> Optional[int]:
         """Get EOS token ID."""
-        return self.tokenizer.eos_token_id
+        return self._tokenizer.eos_token_id
 
-    def tokenize(self, text: str, prepend_bos: bool = True) -> torch.Tensor:
+    def tokenize(self, text: str, add_special_tokens: bool = True) -> torch.Tensor:
         """
         Tokenize text.
 
         Args:
             text: Text to tokenize
-            prepend_bos: Whether to prepend BOS token
+            add_special_tokens: Whether to prepend BOS token
 
         Returns:
             Token IDs tensor of shape (1, seq_len)
         """
-        return self.model.to_tokens(text, prepend_bos=prepend_bos)
+        encoded = self._tokenizer(
+            text,
+            return_tensors="pt",
+            add_special_tokens=add_special_tokens,
+            padding=False,
+            truncation=False,
+        )
+        return encoded["input_ids"].to(self.device)
 
     def decode(self, token_ids: torch.Tensor) -> str:
         """
@@ -161,7 +195,9 @@ class ModelRunner:
         Returns:
             Decoded text
         """
-        return self.model.to_string(token_ids)
+        if token_ids.dim() > 1:
+            token_ids = token_ids[0]
+        return self._tokenizer.decode(token_ids, skip_special_tokens=False)
 
     def compute_distribution(self, logits: torch.Tensor) -> torch.Tensor:
         """
@@ -205,8 +241,8 @@ class ModelRunner:
         gen_kwargs = {
             "max_new_tokens": max_new_tokens,
             "do_sample": temperature > 0,
-            "stop_at_eos": True,
-            "verbose": False,
+            "eos_token_id": self.eos_token_id,
+            "pad_token_id": self._tokenizer.pad_token_id,
         }
         if temperature > 0:
             gen_kwargs["temperature"] = temperature
@@ -233,15 +269,12 @@ class ModelRunner:
         """
         with torch.no_grad():
             if past_kv_cache is not None:
-                # Only pass last token when using cache
-                logits = self.model(input_ids[:, -1:], past_kv_cache=past_kv_cache)
+                outputs = self.model(input_ids[:, -1:], past_key_values=past_kv_cache)
             else:
-                logits = self.model(input_ids)
+                outputs = self.model(input_ids)
 
         # Return logits for last position
-        return logits[
-            :, -1, :
-        ], None  # TransformerLens doesn't return KV cache directly
+        return outputs.logits[:, -1, :], None
 
     def run_with_cache(
         self,
@@ -250,7 +283,7 @@ class ModelRunner:
         apply_chat_template: bool = True,
     ) -> tuple[torch.Tensor, dict]:
         """
-        Run forward pass and capture activations.
+        Run forward pass and capture activations using hooks.
 
         Args:
             prompt: Input prompt
@@ -267,15 +300,45 @@ class ModelRunner:
             formatted = prompt
 
         input_ids = self.tokenize(formatted)
+        cache_dict = {}
+        hooks = []
 
-        with torch.no_grad():
-            logits, cache = self.model.run_with_cache(
-                input_ids,
-                names_filter=names_filter,
-            )
+        # Register hooks on model layers to capture activations
+        for layer_idx in range(self.n_layers):
+            layer = self.model.model.layers[layer_idx]
 
-        # Convert ActivationCache to dict
-        cache_dict = {name: cache[name] for name in cache.keys()}
+            # Map TransformerLens-style names to HF module locations
+            hook_points = {
+                f"blocks.{layer_idx}.hook_resid_post": layer,
+                f"blocks.{layer_idx}.hook_mlp_out": layer.mlp,
+                f"blocks.{layer_idx}.hook_attn_out": layer.self_attn,
+            }
+
+            for name, module in hook_points.items():
+                if names_filter is not None and not names_filter(name):
+                    continue
+
+                def make_hook(hook_name):
+                    def hook_fn(mod, input, output):
+                        # Handle different output formats
+                        if isinstance(output, tuple):
+                            cache_dict[hook_name] = output[0].detach()
+                        else:
+                            cache_dict[hook_name] = output.detach()
+
+                    return hook_fn
+
+                handle = module.register_forward_hook(make_hook(name))
+                hooks.append(handle)
+
+        try:
+            with torch.no_grad():
+                outputs = self.model(input_ids)
+            logits = outputs.logits
+        finally:
+            # Always remove hooks
+            for handle in hooks:
+                handle.remove()
 
         return logits, cache_dict
 

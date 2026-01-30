@@ -228,22 +228,6 @@ class TestTrajectoryCollector:
         assert len(result.trajectories) >= 0
         assert result.total_mass >= 0
 
-    def test_collect_iterator(self):
-        """Test collect_iterator yields trajectories."""
-        runner = MockModelRunner()
-        config = TrajectoryCollectorConfig(
-            max_iterations=3,
-            max_new_tokens=3,
-        )
-        collector = TrajectoryCollector(runner, config)
-
-        trajectories = list(collector.collect_iterator("Hello"))
-
-        for traj in trajectories:
-            assert isinstance(traj, CollectedTrajectory)
-            assert traj.probability > 0
-            assert traj.log_probability < 0  # Log prob should be negative
-
     def test_deduplication(self):
         """Test that duplicate trajectories are not collected."""
         runner = MockModelRunner(deterministic=True)

@@ -17,14 +17,20 @@ TEXT_PART_PROMPT = "prompt"  # User's prompt - normal
 TEXT_PART_CONTINUATION = "continuation"  # Model continuation - gray
 
 
-def visualize_experiment(result_dir: Path, output_dir: Path | None = None) -> None:
-    """Visualize a single experiment's results."""
-    if output_dir is None:
-        output_dir = result_dir / "viz"
-    output_dir.mkdir(parents=True, exist_ok=True)
+def visualize_experiment(
+    result_dir: Path,
+    max_viz_samples_per_branch_point: int | None = None,
+) -> None:
+    """Visualize a single experiment's results.
 
-    for gen_file in result_dir.glob("gen_*.json"):
-        print(f"  {gen_file.name}")
+    Expects folder structure: result_dir/{model}/{branch}/gen.json + est.json
+    Outputs viz to: result_dir/{model}/{branch}/viz/
+    """
+    # Walk all gen.json files in the nested structure
+    for gen_file in sorted(result_dir.glob("**/gen.json")):
+        branch_dir = gen_file.parent
+        rel = branch_dir.relative_to(result_dir)
+        print(f"  {rel}/")
 
         with open(gen_file) as f:
             data = json.load(f)
@@ -32,27 +38,44 @@ def visualize_experiment(result_dir: Path, output_dir: Path | None = None) -> No
         trajectories = data["trajectories"]
         prompt = data.get("prompt_text", "<root>")
         formatted_prompt = data.get("formatted_prompt", prompt)
-        variant = data["prompt_variant"]
+        continuation = data.get("continuation", "")
+        model = data.get("model", "unknown")
+        model_short = model.rsplit("/", 1)[-1]
+        branch_name = branch_dir.name
 
         if not trajectories:
             print("    No trajectories")
             continue
 
-        scores, structures = _load_scores(result_dir, variant, trajectories)
+        # Filter to top N trajectories by probability per branch point
+        if max_viz_samples_per_branch_point is not None:
+            trajectories = sorted(
+                trajectories, key=lambda t: t["probability"], reverse=True
+            )[:max_viz_samples_per_branch_point]
+            print(f"    Filtered to top {len(trajectories)} by probability")
+
+        scores, structures = _load_scores(branch_dir, trajectories)
         greedy_traj = next((t for t in trajectories if t.get("is_greedy")), None)
         # Build text parts for styled rendering
+        # Full generation prefix = formatted_prompt + continuation
+        full_prefix = formatted_prompt + continuation
         greedy_parts = None
         if greedy_traj:
-            continuation = greedy_traj["text"]
-            greedy_parts = _build_text_parts(prompt, formatted_prompt, continuation)
+            greedy_text = greedy_traj["text"]
+            greedy_parts = _build_text_parts(
+                prompt, formatted_prompt, continuation + greedy_text
+            )
+
+        viz_dir = branch_dir / "viz"
+        viz_dir.mkdir(parents=True, exist_ok=True)
 
         for mode in ["word", "phrase", "token"]:
-            tree = build_tree(trajectories, scores, formatted_prompt, mode)
+            tree = build_tree(trajectories, scores, full_prefix, mode)
             if tree:
                 plot_tree(
                     tree,
-                    f"{mode.title()} Tree",
-                    output_dir / f"{mode}_tree.png",
+                    f"{mode.title()} Tree — {model_short} — {branch_name}",
+                    viz_dir / f"{mode}_tree.png",
                     structures,
                     scores,
                     greedy_parts=greedy_parts,
@@ -62,11 +85,11 @@ def visualize_experiment(result_dir: Path, output_dir: Path | None = None) -> No
 
 
 def _load_scores(
-    result_dir: Path, variant: str, trajectories: list[dict]
+    branch_dir: Path, trajectories: list[dict]
 ) -> tuple[dict[str, list[float]], list[str]]:
     """Load structure scores from estimation file."""
     scores, structures = {}, []
-    est_file = result_dir / f"est_{variant}.json"
+    est_file = branch_dir / "est.json"
 
     if est_file.exists():
         with open(est_file) as f:
@@ -218,9 +241,12 @@ def plot_tree(
     if structures and ax_legend:
         _draw_legend(ax_legend, structures)
 
-    plt.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
+    try:
+        plt.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
+        print(f"  Saved: {path}")
+    except ValueError as e:
+        print(f"  Skipped: {path.name} ({e})")
     plt.close()
-    print(f"  Saved: {path}")
 
 
 def _draw_styled_text(
@@ -229,8 +255,11 @@ def _draw_styled_text(
     y_start: float = 0.5,
 ) -> None:
     """Draw styled text on two lines: prompt (grey) and continuation (bold)."""
-    # Escape newlines
-    parts = [(text.replace("\n", "↵"), part_type) for text, part_type in parts]
+    # Escape newlines and dollar signs (matplotlib interprets $ as LaTeX)
+    parts = [
+        (text.replace("\n", "↵").replace("$", "\\$"), part_type)
+        for text, part_type in parts
+    ]
 
     # Separate prompt (template + prompt) from continuation
     prompt_text = "".join(
@@ -486,7 +515,7 @@ def _draw_nodes(
         )
 
         # Show full label with proportional font size
-        label = node.label.replace("\n", "↵")
+        label = node.label.replace("\n", "↵").replace("$", "\\$")
         label_len = len(label)
 
         # For very long labels, wrap into multiple lines and left-align

@@ -7,7 +7,7 @@ Provides a clean interface for collecting trajectories with probabilities.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional
 
@@ -25,10 +25,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Type alias for progress callback
-ProgressCallback = Callable[["CollectionProgress"], None]
-
-
 @dataclass
 class TrajectoryCollectorConfig(SchemaClass):
     """Configuration for trajectory collection."""
@@ -38,8 +34,7 @@ class TrajectoryCollectorConfig(SchemaClass):
     top_k: Optional[int] = None
     top_p: Optional[float] = None
     target_mass: float = 0.95
-    max_iterations: int = 500
-    max_trajectories: Optional[int] = None  # None = unlimited
+    max_trajectories: int = 50
     max_no_progress: int = 20
     seed: int = 42
     # Activation saving options
@@ -112,7 +107,7 @@ class CollectionStats(SchemaClass):
     avg_trajectory_length: float
     min_probability: float
     max_probability: float
-    stop_reason: str  # "target_mass", "max_iterations", "no_progress"
+    stop_reason: str  # "target_mass", "max_trajectories", "no_progress"
 
     @property
     def trajectories_per_second(self) -> float:
@@ -171,16 +166,22 @@ class TrajectoryCollector:
     def collect(
         self,
         prompt: str,
+        continuation: str = "",
         seed: Optional[int] = None,
         progress_callback: Optional[Callable[[CollectionProgress], None]] = None,
+        apply_chat_template: bool = True,
     ) -> CollectionResult:
         """
         Collect trajectories until target mass is reached.
 
         Args:
             prompt: Starting prompt
+            continuation: Optional continuation text appended after prompt
+                tokenization. Continuation tokens are included in the
+                trajectory text but logprobs only cover generated tokens.
             seed: Random seed (uses config seed if None)
             progress_callback: Optional callback for progress updates
+            apply_chat_template: Whether to apply chat template (False if already formatted)
 
         Returns:
             CollectionResult with trajectories and metadata
@@ -192,17 +193,29 @@ class TrajectoryCollector:
         total_iterations = 0
         duplicate_count = 0
         failed_count = 0
-        stop_reason = "max_iterations"
+        stop_reason = "max_trajectories"
 
         seed = seed if seed is not None else self.config.seed
         rng = np.random.default_rng(seed)
 
-        # Apply chat template if model is instruction-tuned
-        formatted_prompt = self.model_runner._apply_chat_template(prompt)
+        # Apply chat template if requested
+        if apply_chat_template:
+            formatted_prompt = self.model_runner._apply_chat_template(prompt)
+        else:
+            formatted_prompt = prompt
 
         # Tokenize prompt
-        prompt_ids = self.model_runner.tokenize(formatted_prompt, prepend_bos=True)
-        prompt_len = prompt_ids.shape[1]
+        input_ids = self.model_runner.tokenize(
+            formatted_prompt, add_special_tokens=True
+        )
+        prompt_len = input_ids.shape[1]
+
+        # Handle continuation: tokenize and append to input_ids
+        if continuation:
+            cont_ids = self.model_runner.tokenize(
+                continuation, add_special_tokens=False
+            )
+            input_ids = torch.cat([input_ids, cont_ids], dim=1)
 
         # Track seen trajectories
         seen_token_ids = set()
@@ -210,7 +223,7 @@ class TrajectoryCollector:
         no_progress_count = 0
 
         # Always get greedy trajectory first
-        greedy = self._greedy_trajectory(prompt_ids, prompt_len)
+        greedy = self._greedy_trajectory(input_ids, prompt_len)
         if greedy is not None:
             seen_token_ids.add(greedy.token_ids)
             trajectories.append(greedy)
@@ -220,10 +233,14 @@ class TrajectoryCollector:
                 f"total_mass={total_mass:.4f}"
             )
 
-        for iteration in range(self.config.max_iterations):
-            total_iterations = iteration + 1
-
+        iteration = 0
+        while True:
             # Check stopping conditions
+            if len(trajectories) >= self.config.max_trajectories:
+                stop_reason = "max_trajectories"
+                logger.info(f"Reached max trajectories {len(trajectories)}")
+                break
+
             if total_mass >= self.config.target_mass:
                 stop_reason = "target_mass"
                 logger.info(f"Reached target mass {total_mass:.4f}")
@@ -234,26 +251,21 @@ class TrajectoryCollector:
                 logger.info(f"No progress for {no_progress_count} iterations")
                 break
 
-            if (
-                self.config.max_trajectories is not None
-                and len(trajectories) >= self.config.max_trajectories
-            ):
-                stop_reason = "max_trajectories"
-                logger.info(f"Reached max trajectories {len(trajectories)}")
-                break
-
             # Generate one trajectory
-            trajectory = self._sample_trajectory(prompt_ids, prompt_len, rng)
+            trajectory = self._sample_trajectory(input_ids, prompt_len, rng)
+            total_iterations = iteration + 1
 
             if trajectory is None:
                 failed_count += 1
                 no_progress_count += 1
+                iteration += 1
                 continue
 
             # Check if we've seen this before
             if trajectory.token_ids in seen_token_ids:
                 duplicate_count += 1
                 no_progress_count += 1
+                iteration += 1
                 continue
 
             # New trajectory found
@@ -272,7 +284,7 @@ class TrajectoryCollector:
                 elapsed = time.time() - start_time
                 progress = CollectionProgress(
                     iteration=iteration,
-                    total_iterations=self.config.max_iterations,
+                    total_iterations=self.config.max_trajectories,
                     trajectories_found=len(trajectories),
                     total_mass=total_mass,
                     target_mass=self.config.target_mass,
@@ -280,6 +292,8 @@ class TrajectoryCollector:
                     no_progress_count=no_progress_count,
                 )
                 progress_callback(progress)
+
+            iteration += 1
 
         # Compute statistics
         elapsed = time.time() - start_time
@@ -309,81 +323,17 @@ class TrajectoryCollector:
             formatted_prompt=formatted_prompt,
         )
 
-    def collect_iterator(
-        self, prompt: str, seed: Optional[int] = None
-    ) -> Iterator[CollectedTrajectory]:
-        """
-        Iterate over collected trajectories.
-
-        Yields trajectories as they are collected, useful for online processing.
-
-        Args:
-            prompt: Starting prompt
-            seed: Random seed
-
-        Yields:
-            CollectedTrajectory objects
-        """
-        seed = seed if seed is not None else self.config.seed
-        rng = np.random.default_rng(seed)
-
-        # Apply chat template if model is instruction-tuned
-        formatted_prompt = self.model_runner._apply_chat_template(prompt)
-
-        # Tokenize prompt
-        prompt_ids = self.model_runner.tokenize(formatted_prompt, prepend_bos=True)
-        prompt_len = prompt_ids.shape[1]
-
-        # Track seen trajectories
-        seen_token_ids = set()
-        total_mass = 0.0
-        no_progress_count = 0
-
-        for iteration in range(self.config.max_iterations):
-            # Check stopping conditions
-            if total_mass >= self.config.target_mass:
-                logger.info(f"Reached target mass {total_mass:.4f}")
-                break
-
-            if no_progress_count >= self.config.max_no_progress:
-                logger.info(f"No progress for {no_progress_count} iterations")
-                break
-
-            # Generate one trajectory
-            trajectory = self._sample_trajectory(prompt_ids, prompt_len, rng)
-
-            if trajectory is None:
-                no_progress_count += 1
-                continue
-
-            # Check if we've seen this before
-            if trajectory.token_ids in seen_token_ids:
-                no_progress_count += 1
-                continue
-
-            # New trajectory found
-            seen_token_ids.add(trajectory.token_ids)
-            total_mass += trajectory.probability
-            no_progress_count = 0
-
-            logger.debug(
-                f"Iteration {iteration}: found trajectory with p={trajectory.probability:.2e}, "
-                f"total_mass={total_mass:.4f}"
-            )
-
-            yield trajectory
-
     def _greedy_trajectory(
         self,
-        prompt_ids: torch.Tensor,
+        input_ids: torch.Tensor,
         prompt_len: int,
     ) -> Optional[CollectedTrajectory]:
         """
         Generate the greedy (argmax) trajectory.
 
         Args:
-            prompt_ids: Tokenized prompt
-            prompt_len: Length of prompt
+            input_ids: Tokenized prompt (+ optional continuation)
+            prompt_len: Length of prompt-only tokens (before continuation)
 
         Returns:
             CollectedTrajectory with is_greedy=True, or None if generation failed
@@ -392,7 +342,7 @@ class TrajectoryCollector:
         device = self.model_runner.device
         eos_id = self.model_runner.eos_token_id
 
-        generated_ids = prompt_ids.clone()
+        generated_ids = input_ids.clone()
         per_token_logprobs = []
         log_prob_sum = 0.0
 
@@ -416,6 +366,7 @@ class TrajectoryCollector:
                 if eos_id is not None and next_token_id == eos_id:
                     break
 
+        # Extract continuation + generated tokens (exclude prompt)
         gen_ids = generated_ids[0, prompt_len:].cpu().tolist()
 
         if not gen_ids:
@@ -441,7 +392,7 @@ class TrajectoryCollector:
 
     def _sample_trajectory(
         self,
-        prompt_ids: torch.Tensor,
+        input_ids: torch.Tensor,
         prompt_len: int,
         rng: np.random.Generator,
     ) -> Optional[CollectedTrajectory]:
@@ -449,8 +400,8 @@ class TrajectoryCollector:
         Sample a single trajectory.
 
         Args:
-            prompt_ids: Tokenized prompt
-            prompt_len: Length of prompt
+            input_ids: Tokenized prompt (+ optional continuation)
+            prompt_len: Length of prompt-only tokens (before continuation)
             rng: Random number generator
 
         Returns:
@@ -461,7 +412,7 @@ class TrajectoryCollector:
         eos_id = self.model_runner.eos_token_id
 
         # Initialize generation
-        generated_ids = prompt_ids.clone()
+        generated_ids = input_ids.clone()
         per_token_logprobs = []
         log_prob_sum = 0.0
 
@@ -514,7 +465,7 @@ class TrajectoryCollector:
                 if eos_id is not None and next_token_id == eos_id:
                     break
 
-        # Extract generated portion
+        # Extract continuation + generated tokens (exclude prompt)
         gen_ids = generated_ids[0, prompt_len:].cpu().tolist()
 
         if not gen_ids:

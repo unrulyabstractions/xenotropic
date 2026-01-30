@@ -39,8 +39,9 @@ def visualize_all() -> None:
         print(f"No experiments found in {OUT_DIR}")
         return
 
+    # Find experiment dirs (contain {model}/{branch}/gen.json)
     experiments = [
-        d for d in OUT_DIR.iterdir() if d.is_dir() and list(d.glob("gen_*.json"))
+        d for d in OUT_DIR.iterdir() if d.is_dir() and list(d.glob("**/gen.json"))
     ]
 
     if not experiments:

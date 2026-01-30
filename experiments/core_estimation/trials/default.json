@@ -1,20 +1,29 @@
 {
-  "experiment_id" : "drag",
+  "experiment_id" : "default",
   "generation": {
-    "model": "Qwen/Qwen2.5-7B",
-    "base_prompt": "Complete the following unfinished sentence. Finish the story in short a paraphraph(2-3 sentences total). Try adding personal details(name, relationships, etc) about the main character. THIS IS THE EXACT UNFINISHED SENTENCE YOU SHOULD USE TO START THE STORY: The tough boxer is also a biker who loves drag ",
+    "models": [
+      "Qwen/Qwen3-1.7B"
+    ],
+    "prompt": "Write a one-paragraph story in which two people meet, fall in love, and live happily ever after. Give the two characters names, jobs, and a favorite shared hobby.",
+    "base_continuation" : "\n\nThe tough boxer is also a biker also loves ",
     "branching_points": [
-      "queens",
-      "racing"
-    ]
+        "drag queens",
+        "drag racing"
+    ],
+    "temperature": 1.2,
+    "top_p": 0.9,
+    "top_k": 50,
+    "seed": 42,
+    "max_trajectories": 30,
+    "max_new_tokens": 500
   },
   "estimation": {
-    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "model": "Qwen/Qwen3-1.7B",
     "systems": [
       "vector_system"
     ],
     "structures" : [
-        "Does this text involve gay, lesbian, or same-sex relationships?",
+        "Does this text involve a person from LGBTQ+ community?",
         "Does this text mention a woman or female person?",
         "Does this text mention a man or male person?"
     ]

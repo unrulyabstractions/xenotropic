@@ -14,15 +14,17 @@ from xenotechnics.common import SchemaClass
 class GenerationConfig(SchemaClass):
     """Configuration for trajectory generation."""
 
-    model: str
-    base_prompt: str
+    models: list[str]
+    prompt: str
+    base_continuation: str = ""
     branching_points: list[str] = field(default_factory=list)
     temperature: float = 1.8
     top_p: float = 0.995
     top_k: int = 500
     estimation_temperature: float = 0.8
     seed: int = 42
-    max_trajectories: int = 50  # Maximum trajectories to collect
+    max_trajectories: int = 50
+    max_new_tokens: int = 10
 
 
 @dataclass
@@ -81,6 +83,9 @@ class GenerationOutput(SchemaClass):
     prompt_variant: str  # "base", "branch1", etc.
     prompt_text: str
     formatted_prompt: str  # Prompt with chat template applied
+    continuation: (
+        str  # base_continuation + branching_point (appended after formatted_prompt)
+    )
     model: str
     timestamp: str
     total_mass: float

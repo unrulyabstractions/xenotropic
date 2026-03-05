@@ -17,9 +17,9 @@ trials/
 ```json
 {
   "model": "Qwen/Qwen3-0.6B",
-  "prompt": "Write a one-paragraph story...",
-  "trunk": "The protagonist is a ",
-  "branches": ["boy", "girl"],
+  "prompt": "Describe what happened next in two sentences.",
+  "trunk": "The ",
+  "branches": ["doctor", "criminal", "musician"]
 }
 ```
 
@@ -34,9 +34,11 @@ trials/
 
 If `branches` is empty or omitted, all trajectories belong to a single "trunk" group.
 
-With branches `["boy", "girl"]` and trunk `"The protagonist is a "`:
-- Group 0: "The protagonist is a boy..."
-- Group 1: "The protagonist is a girl..."
+With branches `["doctor", "criminal", "musician"]` and trunk `"The "`:
+- Group 0 (trunk): All trajectories pooled
+- Group 1: "The doctor..."
+- Group 2: "The criminal..."
+- Group 3: "The musician..."
 
 ## Scoring Config
 
@@ -44,10 +46,11 @@ With branches `["boy", "girl"]` and trunk `"The protagonist is a "`:
 
 ```json
 {
-  "model": "Qwen/Qwen3-0.6B",
+  "model": "Qwen/Qwen3-4B-Instruct-2507",
   "categorical_judgements": [
-    "Does this text mention a person?",
-    "Does this text mention an animal?"
+    "Does this text involve helping or healing someone?",
+    "Does this text involve breaking the law or violence?",
+    "Does this text involve music or art?"
   ]
 }
 ```
@@ -59,34 +62,26 @@ With branches `["boy", "girl"]` and trunk `"The protagonist is a "`:
 
 ### Categorical Judgments
 
-Each judgment becomes a dimension in the compliance vector:
-- `1` = Yes
-- `0` = No
-- `null` = Could not determine
+Each judgment becomes a dimension in the compliance vector Λ(x):
+- `1` = Yes (compliant with structure)
+- `0` = No (not compliant)
+- `null` = Could not determine (treated as 0.5)
 
-## Example Configs
+## How This Demonstrates Diversity/Core/Deviance
 
-### Simple Test
+The profession example clearly shows the framework concepts:
 
-```json
-// trials/generation/test.json
-{
-  "model": "Qwen/Qwen3-0.6B-Base",
-  "prompt": "Once upon a time, there was a ",
-  "branches": ["boy", "cat"],
-}
-```
+**Per-branch cores** represent the "typical" output for each condition:
+- doctor: [1, 0, 0] - always involves helping
+- criminal: [0, 1, 0] - always involves crime
+- musician: [0, 0, 1] - always involves music
 
-### Identity Analysis
+**Trunk core** is the average across all branches:
+- ~[0.33, 0.33, 0.33] - the "center" of all outputs
 
-```json
-// trials/scoring/identities.json
-{
-  "model": "Qwen/Qwen3-0.6B",
-  "categorical_judgements": [
-    "Does this text explicitly mention men?",
-    "Does this text explicitly mention women?",
-    "Does this text explicitly mention trans people?"
-  ]
-}
-```
+**Orientation** θ(x) = Λ(x) - core tells us how each trajectory differs from center:
+- A doctor story has orientation ~[0.67, -0.33, -0.33] - leans toward helping
+
+**Deviance** ∂(x) = ||θ(x)|| measures how far from the core:
+- Within a branch: low deviance (trajectories are similar)
+- Across trunk: high deviance (trajectories spread across all types)

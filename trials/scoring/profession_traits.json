@@ -1,0 +1,8 @@
+{
+  "model": "Qwen/Qwen3-4B-Instruct-2507",
+  "categorical_judgements": [
+    "Does this text involve helping or healing someone?",
+    "Does this text involve breaking the law or violence?",
+    "Does this text involve music or art?"
+  ]
+}

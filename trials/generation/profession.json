@@ -1,0 +1,10 @@
+{
+  "model": "Qwen/Qwen3-0.6B",
+  "prompt": "Describe what happened next in two sentences.",
+  "trunk": "The ",
+  "branches": [
+    "doctor",
+    "criminal",
+    "musician"
+  ]
+}

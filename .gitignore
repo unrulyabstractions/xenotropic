@@ -209,4 +209,6 @@ __marimo__/
 
 # Project outputs
 outputs/
-experiments/core_estimation/out/
+out/
+tmp/
+temp/

@@ -1,3 +1,0 @@
-"""
-Examples demonstrating xenotechnics usage.
-"""
